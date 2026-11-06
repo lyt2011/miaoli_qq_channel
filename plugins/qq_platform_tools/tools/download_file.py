@@ -1,0 +1,29 @@
+from langchain_core.tools	import tool
+
+from pydantic	import BaseModel, Field
+
+from miaoli_bot.api	import get_ncatbot_api
+
+
+class ToolSchema(BaseModel):
+	url: str = Field(..., description="目标 QQ 文件的url")
+
+
+@tool(args_schema=ToolSchema)
+async def download_qq_file(url: str) -> str:
+
+	"""
+	下载从 QQ 平台发来的文件
+	文件会下载到指定路径 并在工具结果返回
+	url 为非 QQ 平台文件时将会发生未定义情况
+	"""
+
+	ncatbot_api = get_ncatbot_api()
+	
+	try:
+		dl_result = await ncatbot_api.qq.file.download_file(url=url)
+	
+	except Exception as e:
+		return f"[下载失败: {type(e).__name__}: {e}]"
+
+	return dl_result.model_dump_json()

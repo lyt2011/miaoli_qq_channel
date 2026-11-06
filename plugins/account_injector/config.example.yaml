@@ -1,0 +1,9 @@
+# 账号信息（四项全必填）
+#
+# inject_account 节点用它拼管理员/机器人的 QQ 号与昵称提示词块，
+# 写进 prompts 的 account-info 段，最终进系统提示词。
+
+bot_id: "机器人QQ号"
+admin_id: "管理员QQ号"
+bot_nickname: "喵璃"
+admin_nickname: "主人"
