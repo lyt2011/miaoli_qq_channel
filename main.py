@@ -42,6 +42,11 @@ class MiaoLiQQChannel(NcatBotPlugin):
 	
 	@registrar.on_message()
 	async def record_anything(self, event: MessageEvent) -> None:
+		
 		"""私聊 event 和群聊 event 都记录"""
-		if event_buffer := store_recall(EVENT_BUFFER, default=None):
+		
+		event_buffer = store_recall(EVENT_BUFFER, default=None)
+		if event_buffer is not None:
 			event_buffer.record(event)
+		
+		return None

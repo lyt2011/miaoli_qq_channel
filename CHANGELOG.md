@@ -10,4 +10,5 @@
 
 ## 索引
 
+- [v0.1.1](CHANGELOG/v0.1.1.md) — 2026-11-06 — 🐛 修掉空缓冲被当成「缓冲区不存在」、导致一条事件都记不进的问题
 - [v0.1.0](CHANGELOG/v0.1.0.md) — 2026-11-06 — 🧱 首次发版：QQ 事件经 `EventBuffer` 环形缓冲、由 `QQChannel` 暴露成 `miaoli_bot` 的消息通道，另附 `account_injector` 与 `qq_platform_tools` 两个子插件

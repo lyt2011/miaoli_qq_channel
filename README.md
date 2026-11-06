@@ -2,7 +2,7 @@
 
 把 QQ 事件缓冲成**消息通道**，供 [`miaoli_bot`](https://github.com/lyt2011/miaoli_bot) 读取。
 
-- **版本**：0.1.0
+- **版本**：0.1.1
 - **入口**：`main.py`（插件类 `MiaoLiQQChannel`）
 - **运行载体**：Ncatbot 插件系统（NapCat / OneBot 11）
 - **依赖**：`miaoli_bot >= 0.38.0`（通道协议 `BaseChannel` / `ChannelMessage` / `register_channel` 在本版才有）
