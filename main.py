@@ -1,21 +1,23 @@
-from ncatbot.utils		import get_log
-from ncatbot.core		import registrar
-from ncatbot.plugin		import NcatBotPlugin
+from ncatbot.utils	import get_log
+from ncatbot.core	import registrar
+from ncatbot.plugin	import NcatBotPlugin
 from ncatbot.event.qq	import MessageEvent
 
-from miaoli_bot.api	import store_set, store_recall, register_channel
+from miaoli_bot.api	import please_run_graph, register_channel, store_recall, store_set
+
+from account_injector.consts	import PLUGIN_CONFIG as ACCOUNT_CONFIG
 
 from .models	import PluginConfig
-from .core		import QQChannel, MessageBuffer, MustReply, JudgeDecider
-from .consts	import (
-	CHANNEL_BUFFER,
-	MESSAGE_BUFFER,
-	RAW_CONFIG,
-	PLUGIN_CONFIG,
-	JUDGE_DECIDER,
+from .core	import (
+	QQChannel,
+	QQChannelMessage,
+	ThreadBacklog,
+	is_addressed,
+	thread_id_of,
 )
+from .consts	import MESSAGE_BUFFER, PLUGIN_CONFIG, RAW_CONFIG, READY_BUFFER
 
-from typing	import Callable, List, Union
+from typing	import Callable, List, Optional, Union
 
 import asyncio
 
@@ -32,7 +34,8 @@ class MiaoLiQQChannel(NcatBotPlugin):
 		super().__init__(*args, **kwargs)
 		
 		self.undo_list	: List[Callable[[], None]]	= []
-		self.deamon		: Union[asyncio.Task, None]	= None
+		
+		self.deamon	: Optional[asyncio.Task]	= None
 	
 	async def on_load(self) -> None:
 		
@@ -43,15 +46,9 @@ class MiaoLiQQChannel(NcatBotPlugin):
 		self.undo_list.append(store_set(RAW_CONFIG, self.config))
 		self.undo_list.append(store_set(PLUGIN_CONFIG, config))
 		
-		# 构建渠道/消息缓冲区/决策者
-		channel_buffer	= MessageBuffer(size=config.channel.buf_size)
-		message_buffer	= MessageBuffer(size=config.message.buf_size)
-		judge_decider	= JudgeDecider(atimeout=config.judge.timeout)
-		
-		# 缓冲区/决策者也塞共享容器
-		self.undo_list.append(store_set(CHANNEL_BUFFER, channel_buffer))
-		self.undo_list.append(store_set(MESSAGE_BUFFER, message_buffer))
-		self.undo_list.append(store_set(JUDGE_DECIDER, judge_decider))
+		# 构建积压区/就绪区
+		self.undo_list.append(store_set(MESSAGE_BUFFER, ThreadBacklog(cap=config.message.buf_size)))
+		self.undo_list.append(store_set(READY_BUFFER, []))
 		
 		# 注册消息渠道
 		self.undo_list.append(register_channel(QQChannel()))
@@ -101,59 +98,60 @@ class MiaoLiQQChannel(NcatBotPlugin):
 	@registrar.on_message()
 	async def backlog_anything(self, event: MessageEvent) -> None:
 		
-		"""私聊 event 和群聊 event 都记录进积压缓冲区"""
+		"""私聊 event 和群聊 event 都记录进各自会话的积压区"""
 		
-		# 记录进积压缓冲区 等待提交器将其提交至通道缓冲区
-		backlog_buffer = store_recall(MESSAGE_BUFFER, default=None) # HACK: 注意这里我还没有做评分 所以直接写 CHANNEL_BUFFER
-		if backlog_buffer is not None:
-			backlog_buffer.record(event)
+		account	= store_recall(ACCOUNT_CONFIG, default=None)
+		backlog	= store_recall(MESSAGE_BUFFER, default=None)
+		
+		if account is None or backlog is None:
+			return None
+		
+		# 入区时就把「是不是冲我来的」算好 之后不再重算
+		backlog.record(
+			thread_id	= thread_id_of(event),
+			event		= event,
+			addressed	= is_addressed(event, account.bot_id, account.bot_nickname),
+		)
 		
 		return None
 	
 	async def auto_submit(self) -> None:
 		
-		"""搬运积压缓冲区的数据去渠道缓冲区"""
+		"""把积压区里该开窗的会话搬进就绪区 搬完就唤醒主包"""
 		
 		config = store_recall(PLUGIN_CONFIG)
 		
-		channel_buffer	= store_recall(CHANNEL_BUFFER)
-		message_buffer	= store_recall(MESSAGE_BUFFER)
-		judge_decider	= store_recall(JUDGE_DECIDER)
-		
 		while True:
 			
-			# 每轮先等待提交间隔 避免 continues 跳过等待导致忙循环
+			# 每轮先等待扫描间隔 避免 continue 跳过等待导致忙循环
 			await asyncio.sleep(config.submit.interval)
 			
-			# 防止键被 drop
-			if message_buffer is None or channel_buffer is None:
-				return None
+			backlog	= store_recall(MESSAGE_BUFFER, default=None)
+			ready	= store_recall(READY_BUFFER, default=None)
 			
-			# 没数据则跳过
-			if not (events := message_buffer.get_data()):
-				LOGGER.info(f"积压缓冲区没有任何数据 跳过")
+			if backlog is None or ready is None:
 				continue
 			
-			decision = await judge_decider.decide(events)
+			woke = False
 			
-			if isinstance(decision, float):
+			for thread_id in backlog.ready_threads():
 				
-				# 对于分数不及格的打个日志并中断
-				if decision < config.submit.min_submit_score:
-					
-					LOGGER.info(f"本次 socpe: {decision} < "
-						f"min_submit_score: {config.submit.min_submit_score} 跳过")
-
+				# 就绪区满了 本轮到此为止 剩下的下轮再来
+				if len(ready) >= config.channel.buf_size:
+					break
+				
+				# 同一个会话已经在就绪区里排着队 不重复投递
+				if any(message.thread_id == thread_id for message in ready):
 					continue
 				
-				else:
-					LOGGER.info(f"本次 socpe: {decision} >= "
-						f"min_submit_score: {config.submit.min_submit_score} 满足")
+				events = backlog.pop_window(thread_id)
+				if not events:
+					continue
+				
+				ready.append(QQChannelMessage(events))
+				woke = True
 			
-			elif isinstance(decision, MustReply):
-				LOGGER.info(f"因为 {decision.reason} 必须回复")
-			
-			# 把积压区清空并丢进渠道缓冲区
-			message_buffer.drain_into(channel_buffer)
-			
+			if woke:
+				please_run_graph()
+		
 		return None

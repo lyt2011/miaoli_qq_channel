@@ -1,6 +1,6 @@
 from pydantic	import BaseModel, Field
 
-from .config	import ChannelConfig, MessageConfig, SubmitConfig, JudgeConfig
+from .config	import ChannelConfig, MessageConfig, SplitConfig, SubmitConfig, TypingConfig
 
 
 class PluginConfig(BaseModel):
@@ -9,5 +9,6 @@ class PluginConfig(BaseModel):
 	
 	channel	: ChannelConfig	= Field(default_factory=ChannelConfig, description="渠道配置")
 	message	: MessageConfig	= Field(default_factory=MessageConfig, description="消息配置")
-	submit	: SubmitConfig	= Field(default_factory=SubmitConfig, description="提交配置")
-	judge	: JudgeConfig	= Field(default_factory=JudgeConfig, description="条件节点配置")
+	submit	: SubmitConfig	= Field(default_factory=SubmitConfig, description="扫描配置")
+	split	: SplitConfig	= Field(default_factory=SplitConfig, description="输出分割配置")
+	typing	: TypingConfig	= Field(default_factory=TypingConfig, description="打字速度配置")

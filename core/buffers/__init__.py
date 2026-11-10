@@ -1,8 +1,8 @@
-from .base				import BaseBuffer
-from .message_buffer	import MessageBuffer
+from .thread_backlog	import ThreadBacklog
 
 
 __all__ = [
-	"BaseBuffer",
-	"MessageBuffer",
+
+	"ThreadBacklog",
+
 ]

@@ -1,5 +1,5 @@
 from .plugin_config	import PluginConfig
-from .config		import ChannelConfig, MessageConfig, SubmitConfig, JudgeConfig
+from .config		import ChannelConfig, MessageConfig, SplitConfig, SubmitConfig, TypingConfig
 
 
 __all__ = [
@@ -7,8 +7,9 @@ __all__ = [
 	# config
 	"ChannelConfig",
 	"MessageConfig",
+	"SplitConfig",
 	"SubmitConfig",
-	"JudgeConfig",
+	"TypingConfig",
 
 	# plugin_config
 	"PluginConfig",

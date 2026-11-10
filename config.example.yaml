@@ -1,5 +1,20 @@
 # QQ 通道开关 关了就接收不到 QQ 信息了
 enable: true
 
-# 事件环形缓冲的容量（条） 超出后最旧的被挤出
-buf_size: 30
+channel:
+  buf_size: 2             # 就绪区上限（条） 满了本轮不再开新窗
+
+message:
+  buf_size: 30            # 每个会话的积压上限（条） 超了只丢最旧的「没叫我」的消息
+
+submit:
+  interval: 3.0           # 扫描间隔（秒）
+
+split:                    # 输出分割 enable=true 时 delimiter 必须非空
+  enable: true
+  delimiter: "\n\n"
+
+typing:                   # 打字延迟 base_speed=0 等价于关
+  enable: true
+  base_speed: 0.06        # 每个字的打字时间（秒）
+  speed_offset: 0.02      # 每字速度偏移（须 < base_speed，否则每字时间可为负）

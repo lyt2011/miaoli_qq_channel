@@ -1,7 +1,0 @@
-name = "base_judges"
-entry_class = "main.BaseJudges"
-description = "内置条件节点：被@ / 被点名"
-
-[[dependences]]
-name = "account_injector"
-version = "*"

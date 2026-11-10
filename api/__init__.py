@@ -1,8 +1,8 @@
-from .judge_ops	import register_judge_node
+from .wake_ops	import push_wake_message
 
 
 __all__ = [
 
-	"register_judge_node",
+	"push_wake_message",
 
 ]

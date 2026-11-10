@@ -2,10 +2,10 @@
 
 把 QQ 事件缓冲成**消息通道**，供 [`miaoli_bot`](https://github.com/lyt2011/miaoli_bot) 读取。
 
-- **版本**：0.3.0
+- **版本**：0.5.0
 - **入口**：`main.py`（插件类 `MiaoLiQQChannel`）
 - **运行载体**：Ncatbot 插件系统（NapCat / OneBot 11）
-- **依赖**：`miaoli_bot >= 1.0.0`（通道协议 `BaseChannel` / `ChannelMessage` / `register_channel` 在本版才有）
+- **依赖**：`miaoli_bot >= 0.44.0`（`BaseChannel.platforms` 与 `reply(platform, thread_id, content)` 是 0.44.0 才有的；`to_text()` 在 0.44.0 已被删除）
 
 ## 定位
 
@@ -22,60 +22,60 @@ miaoli_bot         →  miaoli_qq_channel     ❌
 
 ```
 ncatbot 事件
-  ↓  @registrar.on_message()  backlog_anything
-MESSAGE_BUFFER（积压缓冲，最新在前，满了挤掉最旧的）
-  ↓  auto_submit()                 每 submit.interval 秒一轮
-JudgeDecider.decide(events)
-  ├─ 任一节点返回 MustReply        → 立即提交，后面的节点不再执行
-  └─ 只有 AddScore / None          → 累加分数，≥ min_submit_score 才提交
-  ↓  MessageBuffer.drain_into()
-CHANNEL_BUFFER（渠道缓冲，最新在前）
-  ↓  QQChannel.drain()             取空，反转成「旧 → 新」
-QQChannelMessage
-  ↓  to_structured()               每个 event 一条 model_dump_json()
-miaoli_bot 的 drain_channel_messages()  每 60 秒
-  ↓  json.dumps(channel_messages)
-GraphState.raw_input
+  ↓  @registrar.on_message()  backlog_anything     同步、O(1)、零 await
+ThreadBacklog（每会话一条队列，入区时顺手打好「是不是冲我来的」标）
+  ↓  auto_submit()                                 每 submit.interval 秒扫一轮
+      ├─ 就绪区满 → 停手，剩下的下轮再来
+      ├─ 这个会话已在排队 → 跳过
+      └─ 其余 → 整个会话的积压打包成一条 QQChannelMessage
+READY_BUFFER（就绪区，每会话一条）
+  ↓  QQChannel.drain()                             一次取空、原地 clear
+QQChannelMessage（thread_id / platform / to_content）
+  ↓  主包 tick + 通道的 please_run_graph() 唤醒
+GraphState.messages（一条 HumanMessage = to_content()）
+  ↓  跑完把末条 AIMessage 交回来
+QQChannel.reply(platform, thread_id, content)      按空行切分后逐条发回 QQ
 ```
 
-两级缓冲的分工：`MESSAGE_BUFFER` 收下**所有**事件（沉默期也不丢），`CHANNEL_BUFFER` 只放**已被决定器批准提交**的那批。
+两级缓冲的分工：
+
+| 缓冲 | 放什么 | 上限 | 满了怎么办 |
+|---|---|---|---|
+| `MESSAGE_BUFFER`（积压） | 收到的**全部**事件，按会话分队列 | `message.buf_size` | 只丢最旧的「没叫我」的消息并打日志 |
+| `READY_BUFFER`（就绪） | 已经该开一次窗的会话，每会话一条 | `channel.buf_size` | 本轮不再开新窗，剩下的等下轮 |
 
 ## 目录结构
 
 ```
 miaoli_qq_channel/
 ├── manifest.toml
-├── main.py                    # MiaoLiQQChannel：建缓冲/决定器、记积压、跑提交器
+├── main.py                    # MiaoLiQQChannel：建积压/就绪区、记事件、跑扫描器
 ├── config.example.yaml
 ├── README.md
 ├── CHANGELOG.md
 ├── CHANGELOG/
 ├── api/
-│   └── judge_ops.py           # register_judge_node(func, priority) → 注销函数
+│   └── wake_ops.py            # push_wake_message(thread_id, content) → bool
 ├── consts/
 │   ├── __init__.py
 │   └── store_keys.py          # 共享容器键
 ├── core/
 │   ├── buffers/
-│   │   ├── base.py            # BaseBuffer（ABC）
-│   │   └── message_buffer.py  # MessageBuffer：deque 环形缓冲 + drain_into
-│   ├── judge_decider/
-│   │   ├── judge_decider.py   # JudgeDecider / JudgeNode / NodeWrapper
-│   │   └── actions/           # MustReply / AddScore
+│   │   └── thread_backlog.py  # ThreadBacklog：每会话一条 deque
 │   └── channel/
-│       ├── qq_channel.py      # QQChannel(BaseChannel)
-│       └── qq_channel_message.py  # QQChannelMessage(ChannelMessage)
+│       ├── qq_channel.py      # QQChannel(BaseChannel)：name / platforms / drain / reply
+│       └── qq_channel_message.py  # QQChannelMessage / WakeMessage / is_addressed / thread_id 编制
 ├── models/
 │   ├── plugin_config.py       # PluginConfig
 │   └── config/
 │       ├── channel_config.py  # ChannelConfig
 │       ├── message.py         # MessageConfig
 │       ├── submit.py          # SubmitConfig
-│       └── judge.py           # JudgeConfig
+│       ├── split_config.py    # SplitConfig
+│       └── typing_config.py   # TypingConfig
 └── plugins/                   # 挂在通道下的子插件
     ├── account_injector/      # 账号信息注入 account-info 提示词段
-    ├── base_judges/           # 内置条件节点：被@ / 被点名
-    └── qq_platform_tools/     # 5 个 QQ 平台工具
+    └── qq_platform_tools/     # QQ 平台工具
 ```
 
 ## 配置
@@ -84,60 +84,58 @@ miaoli_qq_channel/
 enable: true
 
 channel:
-  buf_size: 30          # 渠道缓冲容量（条），超出后最旧的被挤出
+  buf_size: 2           # 就绪区上限（条），满了本轮不再开新窗
 message:
-  buf_size: 30          # 积压缓冲容量（条）
+  buf_size: 30          # 每个会话的积压上限（条），超了只丢最旧的「没叫我」的消息
 
 submit:
-  interval: 60.0        # 提交器轮询间隔（秒）
-  min_submit_score: 1.0 # 累计分数低于此值就不提交
+  interval: 3.0         # 扫描间隔（秒）
 
-judge:
-  timeout: 3.0          # 单个条件节点的执行超时（秒）
+split:                  # 输出分割 enable=true 时 delimiter 必须非空
+  enable: true
+  delimiter: "\n\n"
+
+typing:                 # 打字延迟 base_speed=0 等价于关
+  enable: true
+  base_speed: 0.06      # 每个字的打字时间（秒）
+  speed_offset: 0.02    # 每字速度偏移（须 < base_speed，否则每字时间可为负）
 ```
 
-`min_submit_score` 的刻度是「一条规则被完全满足」——单个条件节点的返回值上限是 `1.0`，所以默认值 `1.0` 等于「至少一条规则拉满」。
+## 通道只管「寻址」，不管「该不该说话」
 
-## 条件节点
+三个无状态事实判断，`any()` 串起来：
 
-条件节点是一个 async 函数，收到一批事件，返回三种值之一：
+| 谓词 | 命中条件 |
+|---|---|
+| `is_private` | 不是群消息 |
+| `is_at_me` | 群里 @ 了机器人（`all_except=True`，@全体 不算） |
+| `is_name_mentioned` | 群消息正文里出现了机器人昵称（昵称为空时不命中） |
+
+外加一条前置：**自己发的消息一律不算** —— 否则机器人自己的发言会被当成「被叫名字」，直接自激。
+
+`is_addressed` 返回 `False` 的含义是「**看不出证据**」，不是「确定不是冲我来的」。所以没证据的消息**仍然留在上下文里**，只是不参与溢出保护。至于这一轮要不要开口，归图里的 `output_checker` 决定 —— 通道不做政策判断。
+
+## 主动唤醒
+
+主包侧的定时唤醒插件通过 `api` 推一条唤醒进来：
 
 ```python
-from miaoli_qq_channel.core	import MustReply, AddScore
+from miaoli_qq_channel.api	import push_wake_message
 
-async def at_me(data: Sequence[Any]) -> Union[MustReply, AddScore, None]:
-	
-	"""被 @ 必回"""
-	
-	...
-	return MustReply(reason="被@")
+push_wake_message("group-123456", "现在是晚上十点，主动说一句晚安")
 ```
 
-| 返回 | 含义 | 决定器行为 |
-|---|---|---|
-| `MustReply(reason)` | 硬闸门命中 | 立即返回，后续节点不再执行 |
-| `AddScore(score, reason)` | 命中一条软规则，`score ∈ [0, 1]` | 累加，继续 |
-| `None` | 没意见 | 跳过 |
-
-注册走 `api`，拿到的是注销函数：
-
-```python
-from miaoli_qq_channel.api	import register_judge_node
-
-self.undo_list.append(register_judge_node(at_me, priority=100))
-```
-
-`priority` 数值越大越先执行；`MustReply` 的 `reason` 只保留第一条命中的。`data` 传给节点前会被冻结成 `tuple`，节点里无法增删元素。
-
-现成的两个硬闸门由 `base_judges` 子插件注册（`at_me` 优先级 `HIGH`、`name_mentioned` 优先级 `MEDIUM`），新规则照上面的样板再加一个节点文件就行。
+- 唤醒**不进积压区**，直接塞进就绪区，主包一视同仁当普通渠道消息跑图。
+- **正文必须带提示词**：空正文直接 `raise ValueError`（主包在上游就会把它当无内容丢掉）。
+- 就绪区满了 / 该会话已在排队 → 返回 `False`，属于瞬态反压，下一轮再来。
+- `thread_id` 必须是合法会话标识（`group-<群号>` / `private-<QQ号>`），否则 `raise ValueError`。
 
 ## 三个子插件
 
 | 插件 | 作用 |
 |---|---|
-| `account_injector` | 把管理员 / 机器人的 QQ 号与昵称拼成 `prompts` 的 `account-info` 段 |
-| `base_judges` | 两个硬闸门：被 @ 必回（@全体 不算）、被叫到机器人昵称必回 |
-| `qq_platform_tools` | 发消息 / 收文件 / 查消息 / 撤回 / 戳一戳，五个工具 |
+| `account_injector` | 把管理员 / 机器人的 QQ 号与昵称拼成 `prompts` 的 `account-info` 段（`is_addressed` 也从这里取身份） |
+| `qq_platform_tools` | 发消息 / 收文件 / 查消息 / 撤回 / 戳一戳 |
 
 子插件由 `miaoli_bot` 的 `Loader` 加载 —— 本插件自己不带加载器。`config.yaml` 的 `sub_plugin.load_from` 需要同时包含两个目录：
 
@@ -155,20 +153,16 @@ sub_plugin:
 ```
 miaoli_qq_channel/models.plugin_config      PluginConfig
 miaoli_qq_channel/raw_config                原始 config（dict）
-miaoli_qq_channel/core.message_buffer       MessageBuffer（积压）
-miaoli_qq_channel/core.channel_buffer       MessageBuffer（渠道）
-miaoli_qq_channel/core.judge_decider        JudgeDecider
+miaoli_qq_channel/core.thread_backlog       ThreadBacklog（积压）
+miaoli_qq_channel/core.ready_buffer         就绪区（list）
 ```
 
 前缀都是 `miaoli_qq_channel` —— 这个包的东西不写进 `miaoli_bot/` 命名空间。
 
 ## 已知短板
 
-- **只有硬闸门，没有软规则**：`base_judges` 注册的 `at_me` / `name_mentioned` 都返回 `MustReply`，没有一个节点返回 `AddScore`。所以 `min_submit_score` 那条分支永远不会触发 —— 不 @、不叫昵称的消息会一直待在积压缓冲里，直到被 `buf_size` 挤掉或者被后面的 @ 带出去。
-- **两个 60 秒节拍器叠加**：提交器 `submit.interval` 和主包 `auto_wake` 各 60 秒，串起来最坏延迟约 120 秒。
-- **`config.example.yaml` 没跟上模型**：里面还是旧的顶层 `buf_size: 30`，照它写配置会静默落进默认值。
-- **`to_structured()` 返回的是 JSON 字符串**，`miaoli_bot` 再 `json.dumps` 一次，模型看到的是转义过的双层结构（`{"qq": ["{\"self_id\": ...}"]}`）。改成返回 `dict` 会更干净，但要连带去掉主包的 `indent=2`（实测：紧凑字典 1229 字符 < 现状 1335 < 字典带缩进 1561）。
-- **缓冲不过滤任何事件**：灰条（`grayTipElement`）在 NapCat 侧不在 11 种可转消息段里，会变成 `message: []` 的空段事件，但 `post_type` 照常是 `message` —— 这类事件现在也会被记进积压缓冲。要过滤得在 `backlog_anything` 里加判断，现在没加。
+- **`to_content()` 仍是一份 JSON 字符串**：一次开窗的全部事件打包成一个 JSON 数组，`ensure_ascii=False`。模型看到的是 QQ 事件的原始字段（`post_type` / `message_type` / `sender` / `message` …），不是自然语言。图片也只以 NapCat 的 URL 形式出现，主包不会去下载转 base64。
+- **缓冲不过滤任何事件**：灰条（`grayTipElement`）在 NapCat 侧不在 11 种可转消息段里，会变成 `message: []` 的空段事件，但 `post_type` 照常是 `message` —— 这类事件现在也会被记进积压区。要过滤得在 `backlog_anything` 里加判断，现在没加。
 - **`enable` 配置项没有生效**：`PluginConfig` 里有这个字段，但 `on_load` 和 `backlog_anything` 都没读它，改成 `false` 依然会记录事件。要真关掉只能把插件从 `plugin_whitelist` 里摘掉。
-- **`buf_size` 满了静默丢弃**：`deque(maxlen=size)` 溢出时最旧的直接消失，没有日志也没有计数。
-- **`channel_buffer` 满了会丢已批准的消息**：提交器一次搬运可能超过 `channel.buf_size`（30），超出部分被静默挤出。
+- **`reply` 遇到非 `text` 块直接炸**：多模态回复（图片 / 语音 / 文件）不支持，`content_to_text` 会 `raise NotImplementedError`，整条回复失败。是有意显式失败，不是静默截断。
+- **同名会话已在排队时不合并**：新消息留在积压区，等窗口被主包取走之后才开下一个窗。所以对话密集时一个会话会被切成多个窗口，窗口之间的顺序由扫描间隔决定。
