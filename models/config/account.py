@@ -1,9 +1,9 @@
 from pydantic	import BaseModel, Field
 
 
-class PluginConfig(BaseModel):
+class AccountConfig(BaseModel):
 	
-	"""账号配置"""
+	"""账号信息 四项全必填"""
 	
 	bot_id			: str = Field(..., description="机器人QQ号")
 	admin_id		: str = Field(..., description="管理员QQ号")

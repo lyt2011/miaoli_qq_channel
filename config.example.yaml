@@ -1,6 +1,12 @@
 # QQ 通道开关 关了就接收不到 QQ 信息了
 enable: true
 
+account:                  # 账号信息 四项全必填
+  bot_id: "机器人QQ号"            # 机器人QQ号
+  admin_id: "管理员QQ号"          # 管理员QQ号
+  bot_nickname: "喵璃"             # 机器人昵称
+  admin_nickname: "主人"    # 管理员名称
+
 channel:
   buf_size: 2             # 就绪区上限（条） 满了观察任务会一直等
 

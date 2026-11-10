@@ -88,6 +88,12 @@ miaoli_qq_channel/
 ```yaml
 enable: true
 
+account:                # 账号信息 四项全必填
+  bot_id: "2449906317"          # 机器人QQ号
+  admin_id: "3757973483"        # 管理员QQ号
+  bot_nickname: "喵璃"           # 机器人昵称
+  admin_nickname: "乃依⁧~喵⁧"  # 管理员名称
+
 channel:
   buf_size: 2           # 就绪区上限（条），满了本轮不再开新窗
 message:
@@ -141,7 +147,7 @@ push_wake_message("group-123456", "现在是晚上十点，主动说一句晚安
 
 | 插件 | 作用 |
 |---|---|
-| `account_injector` | 把管理员 / 机器人的 QQ 号与昵称拼成 `prompts` 的 `account-info` 段（`is_addressed` 也从这里取身份） |
+| `account_injector` | 读通道的 `account` 段，把管理员 / 机器人的 QQ 号与昵称拼成 `prompts` 的 `account-info` 段 |
 | `qq_platform_tools` | 发消息 / 收文件 / 查消息 / 撤回 / 戳一戳 |
 
 子插件由 `miaoli_bot` 的 `Loader` 加载 —— 本插件自己不带加载器。`config.yaml` 的 `sub_plugin.load_from` 需要同时包含两个目录：

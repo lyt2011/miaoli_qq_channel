@@ -6,41 +6,49 @@
 
 ## 配置
 
+**本插件没有自己的配置。** 账号信息归父插件 `miaoli_qq_channel` 所有，写在它的 `config.yaml` 里：
+
 ```yaml
-bot_id: "机器人QQ号"
-admin_id: "管理员QQ号"
-bot_nickname: "喵璃"
-admin_nickname: "主人"
+account:
+  bot_id: "机器人QQ号"
+  admin_id: "管理员QQ号"
+  bot_nickname: "喵璃"
+  admin_nickname: "主人"
 ```
 
-四项全必填，缺一个 `on_load` 抛 `ValidationError`。
+四项全必填，缺一个父插件 `on_load` 就抛 `ValidationError`。
 
-## 账号为什么归这个插件
+## 账号为什么归通道
 
-账号是平台侧的事实 —— 哪个号在说话、谁是主人。放在主包里会让主包知道「账号」这个概念（几个管理员？哪些字段？），而那是平台插件的实现细节。
+`is_addressed` 判「这条消息是不是冲我来的」需要 `bot_id` 与 `bot_nickname`，那是通道自己干活的依据，通道必须在入区那一刻就有。
 
-所以配置归本插件，四字段就是它自己的 `PluginConfig`。别的插件如果将来要读，走 `prompts` 段或者新增一个导出层 —— 现在没有任何消费点，就不先造。
+所以账号配置由通道持有、通道校验、通道写进共享容器；本插件只读不写。
+
+这是**子插件指向父插件**的正向依赖：
+
+```python
+# plugins/account_injector/consts/share_store_keys.py
+from miaoli_qq_channel.consts	import PLUGIN_CONFIG as CHANNEL_CONFIG
+
+PLUGIN_CONFIG	= CHANNEL_CONFIG
+```
+
+反过来（父插件在顶层 import 子插件）会炸：子插件是按包名注册进 `sys.modules` 的，宿主导入通道模块时子插件还没就位，`on_load` 都到不了就 `ModuleNotFoundError`。
 
 ## 数据流
 
-`on_load` 做三件事，全部收进 `undo_list`：
+`on_load` 只做一件事：
 
 ```python
-config		= PluginConfig.model_validate(self.config)
-registry	= get_handler_registry()
-
-self.undo_list.append(store_set(PLUGIN_CONFIG, config))     # 给节点读
-self.undo_list.append(store_set(RAW_CONFIG, self.config))   # 原始 yaml
+registry = get_handler_registry()
 self.undo_list.append(registry.on(ON_AGENT_START, inject_account, priority=NORMAL))
 ```
 
-节点是模块级函数，拿不到 `self`，所以配置要经共享容器中转：
+节点是模块级函数，拿不到 `self`，所以配置要经共享容器中转 —— 键是父插件发布的那个：
 
 ```python
-account = store_recall(PLUGIN_CONFIG)
+account = store_recall(PLUGIN_CONFIG).account
 ```
-
-这也是其它子插件节点的通用写法（比如 `meme_ops`），不额外包一层取值函数。
 
 ## 为什么是「段」而不是整串
 
@@ -57,8 +65,7 @@ return {"prompts": {"account-info": None}}
 ## 共享容器的键
 
 ```
-miaoli_qq_channel/subplugin/account_injector.models.plugin_config
-miaoli_qq_channel/subplugin/account_injector.plugin_config
+miaoli_qq_channel/models.plugin_config
 ```
 
-前缀是 `miaoli_qq_channel/`，不是 `miaoli_bot/` —— 本插件挂在 QQ 通道下，不归主包管。
+就是父插件 `consts/store_keys.py` 里的 `PLUGIN_CONFIG`，本插件直接 import 那个常量，不重复写字符串。

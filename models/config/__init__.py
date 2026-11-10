@@ -1,12 +1,14 @@
-from .submit		import SubmitConfig
-from .message		import MessageConfig
+from .submit			import SubmitConfig
+from .account			import AccountConfig
+from .message			import MessageConfig
+from .split_config		import SplitConfig
+from .typing_config		import TypingConfig
 from .channel_config	import ChannelConfig
-from .split_config	import SplitConfig
-from .typing_config	import TypingConfig
 
 
 __all__ = [
 
+	"AccountConfig",
 	"ChannelConfig",
 	"MessageConfig",
 	"SubmitConfig",

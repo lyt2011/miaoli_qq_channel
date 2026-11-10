@@ -1,9 +1,9 @@
-from collections  import deque
-from typing      import Any, Deque, Dict, List, Optional, Tuple
+from collections	import deque
+from typing			import Any, Deque, Dict, List, Optional, Tuple
 
-import logging
-import random
 import time
+import random
+import logging
 
 
 LOGGER = logging.getLogger("miaoli_qq_channel/thread_backlog")

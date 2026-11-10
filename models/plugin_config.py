@@ -1,11 +1,20 @@
 from pydantic	import BaseModel, Field
 
-from .config	import ChannelConfig, MessageConfig, SplitConfig, SubmitConfig, TypingConfig
+from .config	import (
+	AccountConfig,
+	ChannelConfig,
+	MessageConfig,
+	SplitConfig,
+	SubmitConfig,
+	TypingConfig,
+)
 
 
 class PluginConfig(BaseModel):
 	
 	enable	: bool	= Field(default=True, description="QQ通道的开关 关了就接收不到QQ信息了喵")
+	
+	account	: AccountConfig	= Field(..., description="账号信息")
 	
 	channel	: ChannelConfig	= Field(default_factory=ChannelConfig, description="渠道配置")
 	message	: MessageConfig	= Field(default_factory=MessageConfig, description="消息配置")

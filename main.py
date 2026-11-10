@@ -1,19 +1,19 @@
-from ncatbot.utils	import get_log
-from ncatbot.core	import registrar
-from ncatbot.plugin	import NcatBotPlugin
+from ncatbot.utils		import get_log
+from ncatbot.core		import registrar
+from ncatbot.plugin		import NcatBotPlugin
 from ncatbot.event.qq	import MessageEvent
 
 from miaoli_bot.api	import please_run_graph, register_channel, store_recall, store_set
 
 from .models	import PluginConfig
-from .core	import (
+from .consts	import MESSAGE_BUFFER, PLUGIN_CONFIG, RAW_CONFIG, READY_BUFFER
+from .core		import (
 	QQChannel,
 	QQChannelMessage,
 	ThreadBacklog,
 	is_addressed,
 	thread_id_of,
 )
-from .consts	import ACCOUNT_CONFIG, MESSAGE_BUFFER, PLUGIN_CONFIG, RAW_CONFIG, READY_BUFFER
 
 from typing	import Callable, Dict, List
 
@@ -72,14 +72,14 @@ class MiaoLiQQChannel(NcatBotPlugin):
 		
 		"""私聊 event 和群聊 event 都记录进各自会话的积压区"""
 		
-		account	= store_recall(ACCOUNT_CONFIG, default=None)
+		config	= store_recall(PLUGIN_CONFIG, default=None)
 		backlog	= store_recall(MESSAGE_BUFFER, default=None)
 		
-		if account is None or backlog is None:
+		if config is None or backlog is None:
 			return None
 		
 		thread_id	= thread_id_of(event)
-		addressed	= is_addressed(event, account.bot_id, account.bot_nickname)
+		addressed	= is_addressed(event, config.account.bot_id, config.account.bot_nickname)
 		
 		# 入区时就把「是不是冲我来的」算好 之后不再重算
 		backlog.record(
@@ -100,7 +100,6 @@ class MiaoLiQQChannel(NcatBotPlugin):
 			return None
 		
 		# 没人叫我：摇骰子 命中就立刻交（不等补充，本来也没人在跟我说话）
-		config = store_recall(PLUGIN_CONFIG)
 		if not backlog.roll_dice(thread_id, config.submit.chance, config.submit.cooldown):
 			return None
 		

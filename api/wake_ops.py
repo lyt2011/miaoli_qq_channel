@@ -1,7 +1,7 @@
 from miaoli_bot.api	import please_run_graph, store_recall
 
+from ..core		import WakeMessage, split_thread_id
 from ..consts	import PLUGIN_CONFIG, READY_BUFFER
-from ..core	import WakeMessage, split_thread_id
 
 import logging
 

@@ -1,7 +1,7 @@
 from ncatbot.event.qq	import MessageEvent
 
+from miaoli_bot.consts		import GROUP_PREFIX, PRIVATE_PREFIX
 from miaoli_bot.protocols	import BaseChannelMessage, Content
-from miaoli_bot.consts	import GROUP_PREFIX, PRIVATE_PREFIX
 
 from typing	import List, Literal, Tuple
 

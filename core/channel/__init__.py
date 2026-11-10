@@ -1,4 +1,4 @@
-from .qq_channel		import QQChannel
+from .qq_channel			import QQChannel
 from .qq_channel_message	import (
 	QQChannelMessage,
 	WakeMessage,
