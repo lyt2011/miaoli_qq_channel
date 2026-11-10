@@ -24,10 +24,13 @@ miaoli_bot         →  miaoli_qq_channel     ❌
 ncatbot 事件
   ↓  @registrar.on_message()  backlog_anything     同步、O(1)、零 await
 ThreadBacklog（每会话一条队列，入区时顺手打好「是不是冲我来的」标）
-  ↓  watch_thread(thread_id)                       每个会话一个观察任务（debounce）
-      先睡 submit.quiet 秒 → 积压条数变了就重新计时
-      → 没变就尝试提交：就绪区满 / 已在排队 → 不提交、任务继续等
-      → 搬进就绪区（整个会话打包成一条 QQChannelMessage）→ 任务退出
+  ├─ 冲我来的 → watch_thread(thread_id)             每个会话一个观察任务（debounce）
+  │    先睡 submit.quiet 秒 → 积压条数变了就重新计时
+  │    → 没变就尝试提交：就绪区满 / 已在排队 → 不提交、任务继续等
+  │    → 搬进就绪区（整个会话打包成一条 QQChannelMessage）→ 任务退出
+  └─ 没人叫我 → 摇骰子（submit.chance）              命中就立刻交，不等补充
+       冷却期内（submit.cooldown）连摇都不摇
+       就绪区非空 → 让位给别人，且不占冷却
 READY_BUFFER（就绪区，每会话一条）
   ↓  QQChannel.drain()                             一次取空、原地 clear
 QQChannelMessage（thread_id / platform / to_content）
@@ -91,7 +94,9 @@ message:
   buf_size: 30          # 每个会话的积压上限（条），超了只丢最旧的「没叫我」的消息
 
 submit:
-  quiet: 8.0            # 静默窗口（秒）连续这么久没有新消息就提交
+  quiet: 8.0            # 静默窗口（秒）被@/被叫名字之后等对方补充这么久才提交
+  chance: 0.1           # 没人叫我时 每条消息尝试随机开窗的概率
+  cooldown: 120.0       # 随机开窗冷却（秒） 从上次开成算起
 
 split:                  # 输出分割 enable=true 时 delimiter 必须非空
   enable: true
@@ -167,5 +172,6 @@ miaoli_qq_channel/core.ready_buffer         就绪区（list）
 - **缓冲不过滤任何事件**：灰条（`grayTipElement`）在 NapCat 侧不在 11 种可转消息段里，会变成 `message: []` 的空段事件，但 `post_type` 照常是 `message` —— 这类事件现在也会被记进积压区。要过滤得在 `backlog_anything` 里加判断，现在没加。
 - **`enable` 配置项没有生效**：`PluginConfig` 里有这个字段，但 `on_load` 和 `backlog_anything` 都没读它，改成 `false` 依然会记录事件。要真关掉只能把插件从 `plugin_whitelist` 里摘掉。
 - **`reply` 遇到非 `text` 块直接炸**：多模态回复（图片 / 语音 / 文件）不支持，`content_to_text` 会 `raise NotImplementedError`，整条回复失败。是有意显式失败，不是静默截断。
-- **活跃群会被一直推迟**：`quiet` 只能靠「没有新消息」触发。群里每 7 秒就有人说话的话，观察任务会一直重新计时、永不提交 —— 这是有意的取舍（不跟着刷屏），但意味着热闹的群可能长时间不开口。要兜底得加「从第一条寻址消息算起最多等 N 秒」的硬上限，现在没加。
+- **`quiet` 只对寻址消息生效**：群里每 7 秒就有人说话的话，被 @ 之后观察任务会一直重新计时、永不提交。没人 @ 的消息走的是随机开窗那条路，不受这个影响。
+- **随机开窗的速率被跑图吞吐卡死**：单次跑图约 45 秒且串行，所以实际开窗上限约 80 次/小时（`ready` 满就拒）。热闹群里大量掷中的骰子会被丢弃，丢弃不影响正确性。
 - **同名会话已在排队时不合并**：新消息留在积压区，等那个窗口被主包取走之后才开下一个窗。所以对话密集时一个会话会被切成多个窗口。

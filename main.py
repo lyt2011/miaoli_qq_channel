@@ -90,9 +90,30 @@ class MiaoLiQQChannel(NcatBotPlugin):
 			addressed	= addressed,
 		)
 		
-		# 只有冲我来的才值得开一次窗 其余的纯粹当上下文攒着
+		# 冲我来的：起观察期 等对方补充完再一起交
 		if addressed:
 			self.watch_thread(thread_id)
+			
+			return None
+		
+		# 已经在观察期里了就让它一并带走 不插队打断 debounce
+		task = self.tasks.get(thread_id)
+		if task is not None and not task.done():
+			return None
+		
+		# 没人叫我：摇骰子 命中就立刻交（不等补充，本来也没人在跟我说话）
+		config = store_recall(PLUGIN_CONFIG)
+		if not backlog.roll_dice(thread_id, config.submit.chance, config.submit.cooldown):
+			return None
+		
+		# 就绪区里已经有人排队时让位 免得随机开窗挤掉被 @ 的那条
+		# 没开成就不启动冷却 下一条消息还能再摇
+		if not self.submit_window(thread_id, require_empty=True):
+			self.logger.debug(f"{thread_id} 随机开窗让位（就绪区非空或已满）")
+			return None
+		
+		backlog.mark_rolled(thread_id)
+		self.logger.info(f"{thread_id} 随机开窗（未寻址）")
 		
 		return None
 	
@@ -162,11 +183,12 @@ class MiaoLiQQChannel(NcatBotPlugin):
 			
 			return None
 	
-	def submit_window(self, thread_id: str) -> bool:
+	def submit_window(self, thread_id: str, require_empty: bool = False) -> bool:
 		
 		"""把这个会话的积压搬进就绪区 搬完了返回 True
 		
 		全程同步 中间一个 await 都不许有：多个观察任务会同时醒来 靠这个互斥
+		require_empty 给随机开窗用：有人在排队就让位 别挤掉被 @ 的那条
 		"""
 		
 		config	= store_recall(PLUGIN_CONFIG)
@@ -174,6 +196,9 @@ class MiaoLiQQChannel(NcatBotPlugin):
 		backlog	= store_recall(MESSAGE_BUFFER)
 		
 		if len(ready) >= config.channel.buf_size:
+			return False
+		
+		if require_empty and ready:
 			return False
 		
 		# 同一个会话已经在就绪区里排着队 不重复投递

@@ -2,6 +2,8 @@ from collections  import deque
 from typing      import Any, Deque, Dict, List, Optional, Tuple
 
 import logging
+import random
+import time
 
 
 LOGGER = logging.getLogger("miaoli_qq_channel/thread_backlog")
@@ -18,6 +20,7 @@ class ThreadBacklog:
 	def __init__(self, cap: int) -> None:
 		self.cap  = cap
 		self.data  : Dict[str, Deque[Tuple[Any, bool]]]  = {}
+		self.rolled_at  : Dict[str, float]  = {}
 	
 	@property
 	def active_threads(self) -> int:
@@ -49,6 +52,28 @@ class ThreadBacklog:
 		# 全是「冲我来的」 丢谁都是漏 允许超限但要说一声（只在刚越界时打一次）
 		if len(bucket) == self.cap + 1:
 			LOGGER.warning(f"会话 {thread_id} 积压全是待回消息 已超限到 {len(bucket)} 条")
+	
+	def roll_dice(self, thread_id: str, chance: float, cooldown: float) -> bool:
+		
+		"""冷却期外才有机会摇中 只判定 不改状态
+		
+		摇不中不占冷却 否则一段对话里只能摇一次 概率会低到几乎不触发
+		真正开成窗之后由调用方 mark_rolled 启动冷却 —— 让位 / 满了不算数
+		"""
+		
+		now = time.monotonic()
+		
+		# 从没摇中过的会话给 -inf 免得进程刚启动时 uptime 小于冷却就直接挡掉
+		if now - self.rolled_at.get(thread_id, float("-inf")) < cooldown:
+			return False
+		
+		return random.random() < chance
+	
+	def mark_rolled(self, thread_id: str) -> None:
+		
+		"""记一次随机开窗 冷却从这里开始算"""
+		
+		self.rolled_at[thread_id] = time.monotonic()
 	
 	def count(self, thread_id: str) -> int:
 		
