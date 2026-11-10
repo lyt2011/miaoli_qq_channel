@@ -2,7 +2,7 @@
 
 把 QQ 事件缓冲成**消息通道**，供 [`miaoli_bot`](https://github.com/lyt2011/miaoli_bot) 读取。
 
-- **版本**：0.5.0
+- **版本**：0.5.1
 - **入口**：`main.py`（插件类 `MiaoLiQQChannel`）
 - **运行载体**：Ncatbot 插件系统（NapCat / OneBot 11）
 - **依赖**：`miaoli_bot >= 0.44.0`（`BaseChannel.platforms` 与 `reply(platform, thread_id, content)` 是 0.44.0 才有的；`to_text()` 在 0.44.0 已被删除）
@@ -101,7 +101,7 @@ message:
 
 submit:
   quiet: 8.0            # 静默窗口（秒）被@/被叫名字之后等对方补充这么久才提交
-  chance: 0.01          # 没人叫我时 每条消息尝试随机开窗的概率
+  chance: 0.05          # 没人叫我时 每条消息尝试随机开窗的概率
   cooldown: 120.0       # 随机开窗冷却（秒） 从上次开成算起
 
 split:                  # 输出分割 enable=true 时 delimiter 必须非空
