@@ -1,4 +1,5 @@
 from .store_keys	import (
+	ACCOUNT_CONFIG,
 	MESSAGE_BUFFER,
 	PLUGIN_CONFIG,
 	RAW_CONFIG,
@@ -9,6 +10,7 @@ from .store_keys	import (
 __all__ = [
 
 	# store_keys
+	"ACCOUNT_CONFIG",
 	"MESSAGE_BUFFER",
 	"PLUGIN_CONFIG",
 	"RAW_CONFIG",

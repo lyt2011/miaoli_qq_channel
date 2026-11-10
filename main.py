@@ -5,8 +5,6 @@ from ncatbot.event.qq	import MessageEvent
 
 from miaoli_bot.api	import please_run_graph, register_channel, store_recall, store_set
 
-from account_injector.consts	import PLUGIN_CONFIG as ACCOUNT_CONFIG
-
 from .models	import PluginConfig
 from .core	import (
 	QQChannel,
@@ -15,7 +13,7 @@ from .core	import (
 	is_addressed,
 	thread_id_of,
 )
-from .consts	import MESSAGE_BUFFER, PLUGIN_CONFIG, RAW_CONFIG, READY_BUFFER
+from .consts	import ACCOUNT_CONFIG, MESSAGE_BUFFER, PLUGIN_CONFIG, RAW_CONFIG, READY_BUFFER
 
 from typing	import Callable, Dict, List
 
