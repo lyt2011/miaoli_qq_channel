@@ -17,7 +17,7 @@ from .core	import (
 )
 from .consts	import MESSAGE_BUFFER, PLUGIN_CONFIG, RAW_CONFIG, READY_BUFFER
 
-from typing	import Callable, List, Optional, Union
+from typing	import Callable, Dict, List
 
 import asyncio
 
@@ -35,7 +35,8 @@ class MiaoLiQQChannel(NcatBotPlugin):
 		
 		self.undo_list	: List[Callable[[], None]]	= []
 		
-		self.deamon	: Optional[asyncio.Task]	= None
+		# 句柄表不是业务状态 业务数据都在共享容器里
+		self.tasks	: Dict[str, asyncio.Task]	= {}
 	
 	async def on_load(self) -> None:
 		
@@ -57,43 +58,16 @@ class MiaoLiQQChannel(NcatBotPlugin):
 	
 	async def on_close(self) -> None:
 		
-		if self.deamon:
-			self.deamon.cancel()
+		# 先取消所有观察任务 用快照免得边遍历边被回调 pop 掉
+		for task in list(self.tasks.values()):
+			task.cancel()
+		
+		self.tasks.clear()
 		
 		for undo in self.undo_list:
 			undo()
 		
 		self.logger.info(f"{PLUGIN_NAME} 已卸载")
-	
-	@registrar.on_startup()
-	async def create_deamon(self) -> None:
-		
-		def _restart_deamon(task: asyncio.Task) -> None:
-			
-			# 被取消的任务不重启
-			if task.cancelled():
-				self.logger.info(f"提交任务已取消")
-				return None
-			
-			if exception := task.exception():
-				
-				# 创建提交任务并把自己作为完成回调
-				self.deamon = asyncio.create_task(self.auto_submit())
-				self.deamon.add_done_callback(_restart_deamon)
-				
-				self.logger.error(f"提交任务运行异常: "
-					f"{type(exception).__name__}: {exception}", exc_info=exception)
-				
-				return None
-			
-			# 对于已完成的不重启
-			self.logger.info(f"提交任务正常结束")
-			
-			return None
-		
-		# 创建自动提交并添加回调
-		self.deamon = asyncio.create_task(self.auto_submit())
-		self.deamon.add_done_callback(_restart_deamon)
 	
 	@registrar.on_message()
 	async def backlog_anything(self, event: MessageEvent) -> None:
@@ -106,52 +80,111 @@ class MiaoLiQQChannel(NcatBotPlugin):
 		if account is None or backlog is None:
 			return None
 		
+		thread_id	= thread_id_of(event)
+		addressed	= is_addressed(event, account.bot_id, account.bot_nickname)
+		
 		# 入区时就把「是不是冲我来的」算好 之后不再重算
 		backlog.record(
-			thread_id	= thread_id_of(event),
+			thread_id	= thread_id,
 			event		= event,
-			addressed	= is_addressed(event, account.bot_id, account.bot_nickname),
+			addressed	= addressed,
 		)
+		
+		# 只有冲我来的才值得开一次窗 其余的纯粹当上下文攒着
+		if addressed:
+			self.watch_thread(thread_id)
 		
 		return None
 	
-	async def auto_submit(self) -> None:
+	def watch_thread(self, thread_id: str) -> None:
 		
-		"""把积压区里该开窗的会话搬进就绪区 搬完就唤醒主包"""
+		"""给这个会话起一个观察任务 提交成功或会话空了它自己退出"""
 		
-		config = store_recall(PLUGIN_CONFIG)
+		task = self.tasks.get(thread_id)
+		
+		# 已经有一个活着的观察任务就不重复起
+		# 注意不能只判 in：add_done_callback 的回调是排进队列的
+		# 会残留已经跑完但还没被 pop 掉的任务
+		if task is not None and not task.done():
+			return None
+		
+		task = asyncio.create_task(self.watch_until_quiet(thread_id))
+		self.tasks[thread_id] = task
+		
+		def _retire(finished: asyncio.Task) -> None:
+			
+			# 只清自己那一份 免得把后来者从字典里 pop 掉
+			if self.tasks.get(thread_id) is finished:
+				self.tasks.pop(thread_id, None)
+			
+			if finished.cancelled():
+				return None
+			
+			if exception := finished.exception():
+				self.logger.error(f"{thread_id} 观察任务异常: "
+					f"{type(exception).__name__}: {exception}", exc_info=exception)
+			
+			return None
+		
+		task.add_done_callback(_retire)
+		
+		return None
+	
+	async def watch_until_quiet(self, thread_id: str) -> None:
+		
+		"""等这个会话安静下来 再把整段积压交给就绪区
+		
+		只有提交成功才退出。就绪区满了就一直等下去 ——
+		一旦提前放开 那段对话就再没有任何东西会来开窗了
+		"""
+		
+		config	= store_recall(PLUGIN_CONFIG)
+		backlog	= store_recall(MESSAGE_BUFFER)
+		last	= backlog.count(thread_id)
 		
 		while True:
 			
-			# 每轮先等待扫描间隔 避免 continue 跳过等待导致忙循环
-			await asyncio.sleep(config.submit.interval)
+			# 先等一个静默窗口 首次进来也要等
+			await asyncio.sleep(config.submit.quiet)
 			
-			backlog	= store_recall(MESSAGE_BUFFER, default=None)
-			ready	= store_recall(READY_BUFFER, default=None)
+			backlog	= store_recall(MESSAGE_BUFFER)
+			current	= backlog.count(thread_id)
 			
-			if backlog is None or ready is None:
+			# 窗口内又有人说话 重新计时
+			if current != last:
+				last = current
 				continue
 			
-			woke = False
+			# 还是没搬成（就绪区满 / 已在排队）就别放开 下一轮再来
+			if not self.submit_window(thread_id):
+				last = current
+				continue
 			
-			for thread_id in backlog.ready_threads():
-				
-				# 就绪区满了 本轮到此为止 剩下的下轮再来
-				if len(ready) >= config.channel.buf_size:
-					break
-				
-				# 同一个会话已经在就绪区里排着队 不重复投递
-				if any(message.thread_id == thread_id for message in ready):
-					continue
-				
-				events = backlog.pop_window(thread_id)
-				if not events:
-					continue
-				
-				ready.append(QQChannelMessage(events))
-				woke = True
-			
-			if woke:
-				please_run_graph()
+			return None
+	
+	def submit_window(self, thread_id: str) -> bool:
 		
-		return None
+		"""把这个会话的积压搬进就绪区 搬完了返回 True
+		
+		全程同步 中间一个 await 都不许有：多个观察任务会同时醒来 靠这个互斥
+		"""
+		
+		config	= store_recall(PLUGIN_CONFIG)
+		ready	= store_recall(READY_BUFFER)
+		backlog	= store_recall(MESSAGE_BUFFER)
+		
+		if len(ready) >= config.channel.buf_size:
+			return False
+		
+		# 同一个会话已经在就绪区里排着队 不重复投递
+		if any(message.thread_id == thread_id for message in ready):
+			return False
+		
+		events = backlog.pop_window(thread_id)
+		if not events:
+			return True
+		
+		ready.append(QQChannelMessage(events))
+		please_run_graph()
+		
+		return True

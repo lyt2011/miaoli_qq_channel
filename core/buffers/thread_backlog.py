@@ -50,6 +50,14 @@ class ThreadBacklog:
 		if len(bucket) == self.cap + 1:
 			LOGGER.warning(f"会话 {thread_id} 积压全是待回消息 已超限到 {len(bucket)} 条")
 	
+	def count(self, thread_id: str) -> int:
+		
+		"""这个会话现在积压了多少条"""
+		
+		bucket = self.data.get(thread_id)
+		
+		return len(bucket) if bucket else 0
+	
 	def ready_threads(self) -> List[str]:
 		
 		"""所有该开一次窗的会话 按「第一次收到消息」的先后排列"""

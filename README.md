@@ -24,10 +24,10 @@ miaoli_bot         →  miaoli_qq_channel     ❌
 ncatbot 事件
   ↓  @registrar.on_message()  backlog_anything     同步、O(1)、零 await
 ThreadBacklog（每会话一条队列，入区时顺手打好「是不是冲我来的」标）
-  ↓  auto_submit()                                 每 submit.interval 秒扫一轮
-      ├─ 就绪区满 → 停手，剩下的下轮再来
-      ├─ 这个会话已在排队 → 跳过
-      └─ 其余 → 整个会话的积压打包成一条 QQChannelMessage
+  ↓  watch_thread(thread_id)                       每个会话一个观察任务（debounce）
+      先睡 submit.quiet 秒 → 积压条数变了就重新计时
+      → 没变就尝试提交：就绪区满 / 已在排队 → 不提交、任务继续等
+      → 搬进就绪区（整个会话打包成一条 QQChannelMessage）→ 任务退出
 READY_BUFFER（就绪区，每会话一条）
   ↓  QQChannel.drain()                             一次取空、原地 clear
 QQChannelMessage（thread_id / platform / to_content）
@@ -42,14 +42,16 @@ QQChannel.reply(platform, thread_id, content)      按空行切分后逐条发�
 | 缓冲 | 放什么 | 上限 | 满了怎么办 |
 |---|---|---|---|
 | `MESSAGE_BUFFER`（积压） | 收到的**全部**事件，按会话分队列 | `message.buf_size` | 只丢最旧的「没叫我」的消息并打日志 |
-| `READY_BUFFER`（就绪） | 已经该开一次窗的会话，每会话一条 | `channel.buf_size` | 本轮不再开新窗，剩下的等下轮 |
+| `READY_BUFFER`（就绪） | 已经该开一次窗的会话，每会话一条 | `channel.buf_size` | 观察任务不提交，继续等主包取走 |
+
+**只有提交成功，观察任务才退出。** 这是刻意的：任务一旦提前放开而消息还躺在积压区，就再没有任何东西会来开窗 —— 表现就是「说了一堆发现根本没理你」。就绪区满了就一直等下去，主包取走一个它就补一个。
 
 ## 目录结构
 
 ```
 miaoli_qq_channel/
 ├── manifest.toml
-├── main.py                    # MiaoLiQQChannel：建积压/就绪区、记事件、跑扫描器
+├── main.py                    # MiaoLiQQChannel：建积压/就绪区、记事件、管每会话观察任务
 ├── config.example.yaml
 ├── README.md
 ├── CHANGELOG.md
@@ -89,7 +91,7 @@ message:
   buf_size: 30          # 每个会话的积压上限（条），超了只丢最旧的「没叫我」的消息
 
 submit:
-  interval: 3.0         # 扫描间隔（秒）
+  quiet: 8.0            # 静默窗口（秒）连续这么久没有新消息就提交
 
 split:                  # 输出分割 enable=true 时 delimiter 必须非空
   enable: true
@@ -165,4 +167,5 @@ miaoli_qq_channel/core.ready_buffer         就绪区（list）
 - **缓冲不过滤任何事件**：灰条（`grayTipElement`）在 NapCat 侧不在 11 种可转消息段里，会变成 `message: []` 的空段事件，但 `post_type` 照常是 `message` —— 这类事件现在也会被记进积压区。要过滤得在 `backlog_anything` 里加判断，现在没加。
 - **`enable` 配置项没有生效**：`PluginConfig` 里有这个字段，但 `on_load` 和 `backlog_anything` 都没读它，改成 `false` 依然会记录事件。要真关掉只能把插件从 `plugin_whitelist` 里摘掉。
 - **`reply` 遇到非 `text` 块直接炸**：多模态回复（图片 / 语音 / 文件）不支持，`content_to_text` 会 `raise NotImplementedError`，整条回复失败。是有意显式失败，不是静默截断。
-- **同名会话已在排队时不合并**：新消息留在积压区，等窗口被主包取走之后才开下一个窗。所以对话密集时一个会话会被切成多个窗口，窗口之间的顺序由扫描间隔决定。
+- **活跃群会被一直推迟**：`quiet` 只能靠「没有新消息」触发。群里每 7 秒就有人说话的话，观察任务会一直重新计时、永不提交 —— 这是有意的取舍（不跟着刷屏），但意味着热闹的群可能长时间不开口。要兜底得加「从第一条寻址消息算起最多等 N 秒」的硬上限，现在没加。
+- **同名会话已在排队时不合并**：新消息留在积压区，等那个窗口被主包取走之后才开下一个窗。所以对话密集时一个会话会被切成多个窗口。
