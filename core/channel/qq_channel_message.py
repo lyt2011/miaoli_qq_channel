@@ -3,9 +3,9 @@ from ncatbot.event.qq	import MessageEvent
 from miaoli_bot.consts		import GROUP_PREFIX, PRIVATE_PREFIX
 from miaoli_bot.protocols	import BaseChannelMessage, Content
 
-from typing	import List, Literal, Tuple
+from .render_event	import render_event
 
-import json
+from typing	import List, Literal, Tuple
 
 
 def thread_id_of(event: MessageEvent) -> str:
@@ -107,14 +107,12 @@ class QQChannelMessage(BaseChannelMessage):
 		return "qq"
 	
 	def to_content(self) -> Content:
-		"""整套事件序列化成一份 JSON 字符串 没有事件时给空串"""
+		"""整套事件渲染成 markdown 文本 没有事件时给空串"""
 		
 		if not self.events:
 			return ""
 		
-		return json.dumps(
-			[event._data.model_dump(mode="json") for event in self.events],
-			ensure_ascii=False)
+		return "\n".join(render_event(event) for event in self.events)
 
 
 class WakeMessage(BaseChannelMessage):

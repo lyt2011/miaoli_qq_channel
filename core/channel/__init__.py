@@ -1,4 +1,6 @@
 from .qq_channel			import QQChannel
+from .render_event			import render_event
+from .render_segment		import render_segment
 from .qq_channel_message	import (
 	QQChannelMessage,
 	WakeMessage,
@@ -23,5 +25,9 @@ __all__ = [
 	"split_text",
 	"split_thread_id",
 	"thread_id_of",
+
+	# render
+	"render_event",
+	"render_segment",
 
 ]

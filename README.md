@@ -2,7 +2,7 @@
 
 把 QQ 事件缓冲成**消息通道**，供 [`miaoli_bot`](https://github.com/lyt2011/miaoli_bot) 读取。
 
-- **版本**：0.5.1
+- **版本**：0.6.0
 - **入口**：`main.py`（插件类 `MiaoLiQQChannel`）
 - **运行载体**：Ncatbot 插件系统（NapCat / OneBot 11）
 - **依赖**：`miaoli_bot >= 0.44.0`（`BaseChannel.platforms` 与 `reply(platform, thread_id, content)` 是 0.44.0 才有的；`to_text()` 在 0.44.0 已被删除）
@@ -34,6 +34,7 @@ ThreadBacklog（每会话一条队列，入区时顺手打好「是不是冲我�
 READY_BUFFER（就绪区，每会话一条）
   ↓  QQChannel.drain()                             一次取空、原地 clear
 QQChannelMessage（thread_id / platform / to_content）
+  ↓  to_content() 把事件渲染成 markdown 文本（见下节）
   ↓  主包 tick + 通道的 please_run_graph() 唤醒
 GraphState.messages（一条 HumanMessage = to_content()）
   ↓  跑完把末条 AIMessage 交回来
@@ -69,7 +70,9 @@ miaoli_qq_channel/
 │   │   └── thread_backlog.py  # ThreadBacklog：每会话一条 deque
 │   └── channel/
 │       ├── qq_channel.py      # QQChannel(BaseChannel)：name / platforms / drain / reply
-│       └── qq_channel_message.py  # QQChannelMessage / WakeMessage / is_addressed / thread_id 编制
+│       ├── qq_channel_message.py  # QQChannelMessage / WakeMessage / is_addressed / thread_id 编制
+│       ├── render_event.py    # render_event(event)：元信息行 + 每段一行
+│       └── render_segment.py  # render_segment(segment)：单个消息段 → 一行
 ├── models/
 │   ├── plugin_config.py       # PluginConfig
 │   └── config/
@@ -172,9 +175,47 @@ miaoli_qq_channel/core.ready_buffer         就绪区（list）
 
 前缀都是 `miaoli_qq_channel` —— 这个包的东西不写进 `miaoli_bot/` 命名空间。
 
+## 消息渲染格式
+
+`to_content()` 把一次开窗的全部事件渲染成 markdown 文本，**不再是 JSON**。每个事件两行起步：一行元信息，然后每个消息段一行。
+
+群消息：
+
+```markdown
+# [群977469324 Gorabbit开放共享聊天群 2026-11-10 11:46 #444798564] Bot3281(3380027349):
+[文本] 喵
+[表情 314]
+[图片 a.png 48839](https://multimedia.nt.qq.com.cn/download?appid=1406&fileid=...)
+```
+
+私聊消息（元信息里不带会话号，`(QQ号)` 里已经有了）：
+
+```markdown
+# [2026-11-11 09:10 #1012628159] 乃依⁧~喵⁧(3757973483):
+[文本] 我去
+```
+
+元信息三段：`群<群号> <群名>`（仅群消息）· `YYYY-MM-DD HH:MM` · `#<message_id>`。时间取自事件的 `time` 字段、按本机时区格式化，`message_id` 留给 `query_message` / `delete_message` 定位。
+
+消息段一览：
+
+| 段 | 渲染 |
+|---|---|
+| `text` | `[文本] 正文`（内部换行换成 `⏎`，保住「一段一行」） |
+| `face` | `[表情 <id>]` |
+| `at` | `[@ <qq>]` |
+| `reply` | `[回复 <id>]` |
+| `image` / `record` / `video` / `file` | `[标签 文件名 大小](URL)`，缺字段就省 |
+| `forward` | `[转发 <id> <n>条]`，正文不内联，要细节让模型去 `query_message` |
+| 其它（`share` / `json` / `markdown` …） | `[<类型> <预览>]`，预览取 `title` / `content` / `text` 里第一个非空的 |
+
+**为什么不是 JSON**：ob11 每个事件要带上 `post_type` / `message_type` / `sub_type` / `message_seq` / `real_seq` / `message_format` … 十几个固定键，实测 JSON 骨架占整份负载的 93%，一条十来个字的发言要花 600 字符。换成文本后私聊实测 5.6x、群聊 6.8x 的体积压缩，模型也不用「解析」字段了。
+
+代价是程序不再能从上下文里还原事件结构 —— 通道内部还留着 `self.events`，真要原始数据从那里拿。
+
 ## 已知短板
 
-- **`to_content()` 仍是一份 JSON 字符串**：一次开窗的全部事件打包成一个 JSON 数组，`ensure_ascii=False`。模型看到的是 QQ 事件的原始字段（`post_type` / `message_type` / `sender` / `message` …），不是自然语言。图片也只以 NapCat 的 URL 形式出现，主包不会去下载转 base64。
+- **`to_content()` 的图片只给 NapCat URL**：`[图片 a.png 48839](https://...)` 里的 URL 长达数百字符，是渲染后最占体积的一项；主包不会去下载转 base64。
 - **缓冲不过滤任何事件**：灰条（`grayTipElement`）在 NapCat 侧不在 11 种可转消息段里，会变成 `message: []` 的空段事件，但 `post_type` 照常是 `message` —— 这类事件现在也会被记进积压区。要过滤得在 `backlog_anything` 里加判断，现在没加。
 - **`enable` 配置项没有生效**：`PluginConfig` 里有这个字段，但 `on_load` 和 `backlog_anything` 都没读它，改成 `false` 依然会记录事件。要真关掉只能把插件从 `plugin_whitelist` 里摘掉。
 - **`reply` 遇到非 `text` 块直接炸**：多模态回复（图片 / 语音 / 文件）不支持，`content_to_text` 会 `raise NotImplementedError`，整条回复失败。是有意显式失败，不是静默截断。
