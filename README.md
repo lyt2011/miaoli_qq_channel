@@ -2,7 +2,7 @@
 
 把 QQ 事件缓冲成**消息通道**，供 [`miaoli_bot`](https://github.com/lyt2011/miaoli_bot) 读取。
 
-- **版本**：0.6.0
+- **版本**：0.6.1
 - **入口**：`main.py`（插件类 `MiaoLiQQChannel`）
 - **运行载体**：Ncatbot 插件系统（NapCat / OneBot 11）
 - **依赖**：`miaoli_bot >= 0.44.0`（`BaseChannel.platforms` 与 `reply(platform, thread_id, content)` 是 0.44.0 才有的；`to_text()` 在 0.44.0 已被删除）
@@ -151,7 +151,7 @@ push_wake_message("group-123456", "现在是晚上十点，主动说一句晚安
 | 插件 | 作用 |
 |---|---|
 | `account_injector` | 读通道的 `account` 段，把管理员 / 机器人的 QQ 号与昵称拼成 `prompts` 的 `account-info` 段 |
-| `qq_platform_tools` | 发消息 / 收文件 / 查消息 / 撤回 / 戳一戳 |
+| `qq_platform_tools` | 发消息 / 收文件 / 查消息 / 撤回 / 戳一戳 / 语音转文字 |
 
 子插件由 `miaoli_bot` 的 `Loader` 加载 —— 本插件自己不带加载器。`config.yaml` 的 `sub_plugin.load_from` 需要同时包含两个目录：
 

@@ -1,5 +1,5 @@
 name = "miaoli_qq_channel"
-version = "0.6.0"
+version = "0.6.1"
 main = "main.py"
 author = "超·乃依"
 description = "把 QQ 事件缓冲成消息通道，供 miaoli_bot 读取"

@@ -7,6 +7,7 @@ from .tools	import (
 	delete_qq_message,
 	query_qq_message,
 	send_poke,
+	transcribe_qq_voice,
 )
 
 
@@ -26,6 +27,7 @@ class QQPlatformTools(PluginProtocol):
 		self.undo_list.append(register_tool(delete_qq_message))
 		self.undo_list.append(register_tool(query_qq_message))
 		self.undo_list.append(register_tool(send_poke))
+		self.undo_list.append(register_tool(transcribe_qq_voice))
 	
 	async def on_close(self) -> None:
 		

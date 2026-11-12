@@ -1,8 +1,9 @@
-from .send_poke			import send_poke
-from .query_message		import query_qq_message
-from .download_file		import download_qq_file
-from .send_message		import send_message_to_qq
-from .delete_message	import delete_qq_message
+from .send_poke				import send_poke
+from .query_message			import query_qq_message
+from .download_file			import download_qq_file
+from .send_message			import send_message_to_qq
+from .delete_message		import delete_qq_message
+from .transcribe_qq_voice	import transcribe_qq_voice
 
 __all__ = [
 
@@ -11,5 +12,6 @@ __all__ = [
 	"delete_qq_message",
 	"query_qq_message",
 	"send_poke",
+	"transcribe_qq_voice",
 
 ]
