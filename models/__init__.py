@@ -2,6 +2,7 @@ from .plugin_config	import PluginConfig
 from .config		import (
 	AccountConfig,
 	ChannelConfig,
+	CorpusConfig,
 	MessageConfig,
 	SplitConfig,
 	SubmitConfig,
@@ -14,6 +15,7 @@ __all__ = [
 	# config
 	"AccountConfig",
 	"ChannelConfig",
+	"CorpusConfig",
 	"MessageConfig",
 	"SplitConfig",
 	"SubmitConfig",

@@ -26,3 +26,9 @@ typing:                   # 打字延迟 base_speed=0 等价于关
   enable: true
   base_speed: 0.06        # 每个字的打字时间（秒）
   speed_offset: 0.02      # 每字速度偏移（须 < base_speed，否则每字时间可为负）
+
+corpus:                   # 可选 语料录制 默认关
+  enable: false           # 开了才写文件 每条消息落一行 JSONL
+  path: null              # 留空写 data/corpus.jsonl
+  encoding: "utf-8"       # 写文件用的编码
+  flush: true             # 每条写完立刻刷盘 不刷最多丢最后一条

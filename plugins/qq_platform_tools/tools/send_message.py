@@ -2,8 +2,8 @@ from langchain_core.tools	import tool
 
 from pydantic	import BaseModel, Field, model_validator
 
-from miaoli_bot.utils	import easier_send
-from miaoli_bot.api		import get_ncatbot_api
+from miaoli_qq_channel.utils	import easier_send
+from miaoli_bot.api				import get_ncatbot_api
 
 from ..models	import (
 	AtMessage,

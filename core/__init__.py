@@ -1,5 +1,6 @@
-from .buffers	import ThreadBacklog
-from .channel	import (
+from .buffers		import ThreadBacklog
+from .corpus_writer	import CorpusWriter, to_record
+from .channel		import (
 	QQChannel,
 	QQChannelMessage,
 	WakeMessage,
@@ -17,6 +18,10 @@ __all__ = [
 
 	# buffers
 	"ThreadBacklog",
+
+	# corpus_writer
+	"CorpusWriter",
+	"to_record",
 
 	# channel
 	"QQChannel",

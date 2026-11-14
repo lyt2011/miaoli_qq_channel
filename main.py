@@ -10,18 +10,23 @@ from .consts	import MESSAGE_BUFFER, PLUGIN_CONFIG, RAW_CONFIG, READY_BUFFER
 from .core		import (
 	QQChannel,
 	QQChannelMessage,
+	CorpusWriter,
 	ThreadBacklog,
 	is_addressed,
 	thread_id_of,
 )
 
-from typing	import Callable, Dict, List
+from pathlib	import Path
+from typing		import Callable, Dict, List, Optional
 
 import asyncio
 
 
 PLUGIN_NAME	= "喵璃のQQ通道"
 LOGGER		= get_log(PLUGIN_NAME)
+
+# 语料记录 配置里 path 留空时写到这里
+DEFAULT_CORPUS_PATH = Path(__file__).resolve().parent / "data" / "corpus.jsonl"
 
 
 class MiaoLiQQChannel(NcatBotPlugin):
@@ -35,6 +40,9 @@ class MiaoLiQQChannel(NcatBotPlugin):
 		
 		# 句柄表不是业务状态 业务数据都在共享容器里
 		self.tasks	: Dict[str, asyncio.Task]	= {}
+		
+		# 语料记录器 没开就是 None
+		self.writer	: Optional[CorpusWriter]	= None
 	
 	async def on_load(self) -> None:
 		
@@ -52,6 +60,17 @@ class MiaoLiQQChannel(NcatBotPlugin):
 		# 注册消息渠道
 		self.undo_list.append(register_channel(QQChannel()))
 		
+		# 语料记录是可选能力 不开就完全不影响原有的通道行为
+		if config.corpus.enable:
+			path = Path(config.corpus.path) if config.corpus.path else DEFAULT_CORPUS_PATH
+			self.writer = CorpusWriter(
+				path		= path,
+				encoding	= config.corpus.encoding,
+				flush		= config.corpus.flush,
+			)
+			self.writer.open()
+			self.logger.info(f"{PLUGIN_NAME} 语料记录已开启 写入 {path}")
+		
 		self.logger.info(f"{PLUGIN_NAME} 已加载")
 	
 	async def on_close(self) -> None:
@@ -65,12 +84,20 @@ class MiaoLiQQChannel(NcatBotPlugin):
 		for undo in self.undo_list:
 			undo()
 		
+		if self.writer is not None:
+			self.writer.close()
+			self.writer = None
+		
 		self.logger.info(f"{PLUGIN_NAME} 已卸载")
 	
 	@registrar.on_message()
 	async def backlog_anything(self, event: MessageEvent) -> None:
 		
 		"""私聊 event 和群聊 event 都记录进各自会话的积压区"""
+		
+		# 语料记录放在最前面 后面的任何分支都不影响它
+		if self.writer is not None:
+			self.writer.write(event)
 		
 		config	= store_recall(PLUGIN_CONFIG, default=None)
 		backlog	= store_recall(MESSAGE_BUFFER, default=None)

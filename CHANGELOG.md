@@ -10,6 +10,7 @@
 
 ## 索引
 
+- [v0.7.0](CHANGELOG/v0.7.0.md) — 2026-11-14 — 🧱 `easier_send` 与 `meme_ops` 从 `miaoli_bot` 迁入本仓库，另加可选语料录制（录制渲染后的文本，默认关）
 - [v0.6.1](CHANGELOG/v0.6.1.md) — 2026-11-12 — 🔤 `qq_platform_tools` 新增 `transcribe_qq_voice`，按消息 id 调 QQ 自带语音转文字
 - [v0.6.0](CHANGELOG/v0.6.0.md) — 2026-11-11 — 🧱 `to_content()` 从 ob11 JSON 改成 markdown 文本（元信息行 + 每段一行），私聊压 5.6x、群聊压 6.8x（破坏性）
 - [v0.5.1](CHANGELOG/v0.5.1.md) — 2026-11-10 — 🎲 随机开窗概率 1% → 5%，十句以内有一半机会插一次嘴

@@ -1,8 +1,10 @@
 # miaoli_qq_channel
 
+> 🤖 **完全 vibe coding 生成** —— 本仓库的每一行代码、文档与配置模板都是对话式编程（vibe coding）的产物，没有手写、没有逐行评审。用之前请自己读代码。
+
 把 QQ 事件缓冲成**消息通道**，供 [`miaoli_bot`](https://github.com/lyt2011/miaoli_bot) 读取。
 
-- **版本**：0.6.1
+- **版本**：0.7.0
 - **入口**：`main.py`（插件类 `MiaoLiQQChannel`）
 - **运行载体**：Ncatbot 插件系统（NapCat / OneBot 11）
 - **依赖**：`miaoli_bot >= 0.44.0`（`BaseChannel.platforms` 与 `reply(platform, thread_id, content)` 是 0.44.0 才有的；`to_text()` 在 0.44.0 已被删除）
@@ -61,6 +63,7 @@ miaoli_qq_channel/
 ├── CHANGELOG.md
 ├── CHANGELOG/
 ├── api/
+│   ├── __init__.py
 │   └── wake_ops.py            # push_wake_message(thread_id, content) → bool
 ├── consts/
 │   ├── __init__.py
@@ -68,21 +71,26 @@ miaoli_qq_channel/
 ├── core/
 │   ├── buffers/
 │   │   └── thread_backlog.py  # ThreadBacklog：每会话一条 deque
-│   └── channel/
-│       ├── qq_channel.py      # QQChannel(BaseChannel)：name / platforms / drain / reply
-│       ├── qq_channel_message.py  # QQChannelMessage / WakeMessage / is_addressed / thread_id 编制
-│       ├── render_event.py    # render_event(event)：元信息行 + 每段一行
-│       └── render_segment.py  # render_segment(segment)：单个消息段 → 一行
+│   ├── channel/
+│   │   ├── qq_channel.py      # QQChannel(BaseChannel)：name / platforms / drain / reply
+│   │   ├── qq_channel_message.py  # QQChannelMessage / WakeMessage / is_addressed / thread_id 编制
+│   │   ├── render_event.py    # render_event(event)：元信息行 + 每段一行
+│   │   └── render_segment.py  # render_segment(segment)：单个消息段 → 一行
+│   └── corpus_writer.py       # CorpusWriter / to_record：消息事件 → 一行 JSONL
 ├── models/
 │   ├── plugin_config.py       # PluginConfig
 │   └── config/
 │       ├── channel_config.py  # ChannelConfig
+│       ├── corpus.py          # CorpusConfig（语料录制）
 │       ├── message.py         # MessageConfig
 │       ├── submit.py          # SubmitConfig
 │       ├── split_config.py    # SplitConfig
 │       └── typing_config.py   # TypingConfig
+├── utils/
+│   └── easier_send.py         # easier_send(mode, chat_id, ob11_message)：群 / 私聊发送
 └── plugins/                   # 挂在通道下的子插件
     ├── account_injector/      # 账号信息注入 account-info 提示词段
+    ├── meme_ops/              # 表情包归档 / 发送 / 删除工具
     └── qq_platform_tools/     # QQ 平台工具
 ```
 
@@ -115,6 +123,12 @@ typing:                 # 打字延迟 base_speed=0 等价于关
   enable: true
   base_speed: 0.06      # 每个字的打字时间（秒）
   speed_offset: 0.02    # 每字速度偏移（须 < base_speed，否则每字时间可为负）
+
+corpus:                 # 可选 语料录制 默认关
+  enable: false         # 开了才写文件
+  path: null            # 留空写 data/corpus.jsonl
+  encoding: "utf-8"     # 写文件用的编码
+  flush: true           # 每条写完立刻刷盘 不刷最多丢最后一条
 ```
 
 ## 通道只管「寻址」，不管「该不该说话」
@@ -146,11 +160,47 @@ push_wake_message("group-123456", "现在是晚上十点，主动说一句晚安
 - 就绪区满了 / 该会话已在排队 → 返回 `False`，属于瞬态反压，下一轮再来。
 - `thread_id` 必须是合法会话标识（`group-<群号>` / `private-<QQ号>`），否则 `raise ValueError`。
 
-## 三个子插件
+## 发送
+
+`reply` 之外要主动发东西（发图、发语音、@ 人、发到别的会话），用 `utils` 里的 `easier_send`：
+
+```python
+from miaoli_qq_channel.utils	import easier_send
+
+await easier_send("group", 977469324, [{"type": "text", "data": {"text": "在的"}}])
+```
+
+- `mode` 只有 `"group"` / `"private"`，别的值直接 `ValueError`。
+- `ob11_message` 是**消息段数组**（不是字符串）。`record` 段的 `file` 记得带 `file://` 前缀，NapCat 会自己转 SILK。
+- `ncatbot_api` 是给测试用的可替换入口，正常调用不用传 —— 不传就取主包放进共享容器的那个（`miaoli_bot.api.get_ncatbot_api()`）。
+- 本函数原先住在 `miaoli_bot.utils`，0.7.0 迁到这里：QQ 的发送细节归通道，主包不认识 QQ。
+
+## 语料录制（可选）
+
+默认关。开了之后**每条**收到的消息都会先在 `backlog_anything` 的第一行落一行 JSONL，然后才走原有的缓冲逻辑 —— 放在最前面，后面任何早退分支都不会漏记。
+
+```jsonl
+{"time": "2026-11-14 13:31:41", "timestamp": 1794634301, "thread_id": "group-977469324", "type": "group", "group_id": "977469324", "group_name": "…", "user_id": "3757973483", "nickname": "…", "card": "…", "message_id": "444798564", "text": "…"}
+```
+
+| 字段 | 来源 |
+|---|---|
+| `time` / `timestamp` | 事件自带的秒级时间戳（`time` 按本机时区格式化） |
+| `thread_id` | 与通道一致（`group-<群号>` / `private-<QQ号>`） |
+| `type` | `is_group_msg()` 判出来的 `group` / `private` |
+| `text` | `render_event()` 的渲染结果，**带元信息行与段标签**，不是纯正文 |
+
+- `path` 留空写 `data/corpus.jsonl`，目录不存在会自动建。
+- `flush: true` 每条刷盘，崩溃最多丢最后一条；关掉则攒在缓冲里，快但可能丢一批。
+- 录制与通道行为**完全解耦**：`enable: false` 时 `self.writer` 是 `None`，`backlog_anything` 里只多一次 `is not None` 判断。
+- 写进去的是**渲染后**的文本，还原不出原始事件结构；要原始 ob11 数据得改 `to_record`。
+
+## 四个子插件
 
 | 插件 | 作用 |
 |---|---|
 | `account_injector` | 读通道的 `account` 段，把管理员 / 机器人的 QQ 号与昵称拼成 `prompts` 的 `account-info` 段 |
+| `meme_ops` | 表情包素材库：归档 / 发送 / 按 hash 删除（sqlite）。0.7.0 从 `miaoli_bot/plugins/` 迁入 —— 它发送时依赖 `easier_send`，本来就是 QQ 专属 |
 | `qq_platform_tools` | 发消息 / 收文件 / 查消息 / 撤回 / 戳一戳 / 语音转文字 |
 
 子插件由 `miaoli_bot` 的 `Loader` 加载 —— 本插件自己不带加载器。`config.yaml` 的 `sub_plugin.load_from` 需要同时包含两个目录：
@@ -222,3 +272,5 @@ miaoli_qq_channel/core.ready_buffer         就绪区（list）
 - **`quiet` 只对寻址消息生效**：群里每 7 秒就有人说话的话，被 @ 之后观察任务会一直重新计时、永不提交。没人 @ 的消息走的是随机开窗那条路，不受这个影响。
 - **随机开窗的速率被跑图吞吐卡死**：单次跑图约 45 秒且串行，所以实际开窗上限约 80 次/小时（`ready` 满就拒）。热闹群里大量掷中的骰子会被丢弃，丢弃不影响正确性。
 - **同名会话已在排队时不合并**：新消息留在积压区，等那个窗口被主包取走之后才开下一个窗。所以对话密集时一个会话会被切成多个窗口。
+- **语料只记渲染后的文本**：`to_record` 用的是 `render_event()` 的输出，图片只剩一个 URL、转发只剩条数，原始 ob11 结构不进语料。要训练格式数据得先改这里。
+- **`meme_ops` 的 `help_doc.path` 是绝对路径**：本机示例写的是 `/sdcard/Ncatbot_QQ/plugins/miaoli_qq_channel/plugins/meme_ops/data/meme_helper.md`，换到服务器（`/root/Ncatbot_QQ/...`）必须跟着改；改错不报错，只是帮助文档不注入。`config.example.yaml` 用的是 `$workspace/data/meme_helper.md`，照模板复制就不会踩。
