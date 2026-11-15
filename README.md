@@ -4,10 +4,10 @@
 
 把 QQ 事件缓冲成**消息通道**，供 [`miaoli_bot`](https://github.com/lyt2011/miaoli_bot) 读取。
 
-- **版本**：0.8.0
+- **版本**：0.9.0
 - **入口**：`main.py`（插件类 `MiaoLiQQChannel`）
 - **运行载体**：Ncatbot 插件系统（NapCat / OneBot 11）
-- **依赖**：`miaoli_bot >= 0.44.0`（`BaseChannel.platforms` 与 `reply(platform, thread_id, content)` 是 0.44.0 才有的；`to_text()` 在 0.44.0 已被删除）；可选依赖 `edge-tts`（只有开了 `voice.enable` 才需要）
+- **依赖**：`miaoli_bot >= 0.44.0`（`BaseChannel.platforms` 与 `reply(platform, thread_id, content)` 是 0.44.0 才有的；`to_text()` 在 0.44.0 已被删除）；可选依赖 `httpx`（只有开了 `voice.enable` 才需要）
 
 ## 定位
 
@@ -78,7 +78,8 @@ miaoli_qq_channel/
 │   │   └── render_segment.py  # render_segment(segment)：单个消息段 → 一行
 │   ├── corpus_writer.py       # CorpusWriter / to_record：消息事件 → 一行 JSONL
 │   └── tts/
-│       └── synthesize.py      # synthesize(text, voice, pitch, rate)：edge-tts → mp3 字节
+│       ├── strip_tail_symbols.py  # strip_tail_symbols(text)：滤掉没有读音的尾巴符号
+│       └── synthesize.py      # synthesize(text, url, key, model, voice, style)：MiMo → wav 字节
 ├── models/
 │   ├── plugin_config.py       # PluginConfig
 │   └── config/
@@ -130,9 +131,11 @@ typing:                 # 打字延迟 base_speed=0 等价于关
 voice:                  # 可选 按概率把整条回复换成一条语音
   enable: false         # 开了才会发语音
   probability: 0.3      # 每次回复掷一次骰子 命中就整条语音
-  voice: "zh-CN-XiaoyiNeural"   # edge-tts 音色全名
-  pitch: "+16Hz"         # 音调 例如 +16Hz / -10Hz
-  rate: "+0%"            # 语速 例如 +10% / -5%
+  mimo_url: "https://api.xiaomimimo.com/v1/chat/completions"   # MiMo 语音合成接口
+  mimo_key: ""          # MiMo 的 API Key 填在 config.yaml 里 不要进仓库
+  model: "mimo-v2.5-tts"   # 语音合成模型
+  voice: "冰糖"          # 预置音色 ID
+  style: ""             # 语气指令 放在 user 角色 留空只传朗读文本
   min_chars: 10         # 说出来的字数不到这么多不发语音
   max_chars: 30         # 说出来的字数超过这么多不发语音
 
@@ -189,20 +192,24 @@ await easier_send("group", 977469324, [{"type": "text", "data": {"text": "在的
 
 ## 语音（可选）
 
-默认关。`voice.enable` 为真时，**每条回复掷一次骰子**：命中就把整条回复交给 `edge-tts` 合成一条 mp3，再用 `record` 段发出去。
+默认关。`voice.enable` 为真时，**每条回复掷一次骰子**：命中就把整条回复交给 MiMo 语音合成出一条 wav，再用 `record` 段发出去。
 
 | 决策 | 位置 |
 |---|---|
 | 骰子 | `qq_channel.py` 的 `reply()`，切分**之前**跑一次 `random()` |
-| 长度门槛 | `min_chars <= len(spoken) <= max_chars`，`spoken` 是去掉换行与空白后的字数 |
-| 合成 | `core/tts/synthesize.py`，`Communicate.stream()` 收 `type == "audio"` 的块，**全程内存不落盘** |
-| 发送 | `ob11_message = [{"type": "record", "data": {"file": "base64://<mp3>"}}]` |
+| 长度门槛 | `min_chars <= len(spoken) <= max_chars`，`spoken` 是过滤尾巴符号并去掉换行空白后的字数 |
+| 尾巴过滤 | `core/tts/strip_tail_symbols.py`，只作用于语音分支 |
+| 合成 | `core/tts/synthesize.py`，非流式一次 `POST`，读 `choices[0].message.audio.data` 解 base64，**全程内存不落盘** |
+| 发送 | `ob11_message = [{"type": "record", "data": {"file": "base64://<wav>"}}]` |
 
 - 粒度是**整条回复**，不是一段。命中后不进 `split_text`，一条回复只发一条语音。
-- 长度门槛数的是**说出来的字**，空行与空格不算；合成时仍送原文本，换行造成的停顿会保留。
+- 长度门槛数的是**说出来的字**：`w` 与爱心类符号（`♡♥❤💕💗`）只有字形没有读音，先滤掉再数；空行与空格也不算。合成时送的是过滤后的原文本，换行造成的停顿保留。
+- **文字路径不过滤**：没命中语音时 `♡` / `w` 原样发出去。`w` 只在当尾巴用时才删（后面接标点或收尾，且前面不贴 ASCII 字母数字），`wifi` / `www.example.com` / `p≧w≦q` 不会被误伤。
 - 任一环节失败（合成异常、空音频、NapCat 拒收）都 `warning` 一笔然后**回退到按段文字的原有路径**，消息不会丢。
 - 语音那条不补打字延迟 —— 合成本身就花掉了时间。
-- 只能调 `rate` / `pitch` / `volume` 三个口子；Azure 的 `style`（cheerful / sad / angry 之类）edge-tts 不暴露。
+- 模型只朗读 `assistant` 角色的内容，`style` 放 `user` 角色 —— 这是 MiMo 的调用约定，写进 `synthesize` 里了；`style` 留空就只传朗读文本。
+- 音色由 `voice`（预置 ID）决定，`style` 改不动音色，只影响语速、音高走势、停顿与情绪。
+- `voicedesign` / `voiceclone` 试过就放弃了：同一个描述或同一段样本跑两次，出来的人耳可辨不同，固定不住音色，所以只用预置音色。
 
 ## 语料录制（可选）
 
@@ -303,4 +310,5 @@ miaoli_qq_channel/core.ready_buffer         就绪区（list）
 - **同名会话已在排队时不合并**：新消息留在积压区，等那个窗口被主包取走之后才开下一个窗。所以对话密集时一个会话会被切成多个窗口。
 - **语料只记渲染后的文本**：`to_record` 用的是 `render_event()` 的输出，图片只剩一个 URL、转发只剩条数，原始 ob11 结构不进语料。要训练格式数据得先改这里。
 - **`meme_ops` 的 `help_doc.path` 是绝对路径**：本机示例写的是 `/sdcard/Ncatbot_QQ/plugins/miaoli_qq_channel/plugins/meme_ops/data/meme_helper.md`，换到服务器（`/root/Ncatbot_QQ/...`）必须跟着改；改错不报错，只是帮助文档不注入。`config.example.yaml` 用的是 `$workspace/data/meme_helper.md`，照模板复制就不会踩。
-- **语音的 `base64://` 只验证到 NapCat 之前**：单机合成、字节拼段、`reply` 回退逻辑都有测试，但 NapCat 收不收一段 20~40 KB 的 `base64://` 还没在真机跑过。收不下会在日志里留一条 `语音发送失败 回退到文字`，回退到 `file://` 要写盘加清理，目前没做。
+- **语音的 `base64://` 只验证到 NapCat 之前**：单机合成、字节拼段、`reply` 回退逻辑都有测试，但 NapCat 收不收一段 60~90 KB 的 `base64://<wav>` 还没在真机跑过。收不下会在日志里留一条 `语音发送失败 回退到文字`，回退到 `file://` 要写盘加清理，目前没做。
+- **合成延迟 7~15 秒**：MiMo 非流式要等整段推理完，10~30 字的一条通常 7~15 秒，偶发上百秒。命中语音的那条回复会明显晚于正常打字节奏发出。

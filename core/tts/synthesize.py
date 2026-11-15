@@ -1,34 +1,57 @@
 from typing	import Optional
 
-import edge_tts
+import base64
 import logging
+
+import httpx
 
 
 LOGGER = logging.getLogger("QQChannelTTS")
 
 
-async def synthesize(text: str, voice: str, pitch: str, rate: str) -> Optional[bytes]:
+async def synthesize(text: str, url: str, key: str, model: str, voice: str, style: str) -> Optional[bytes]:
 	
-	"""用 edge-tts 合成 mp3 字节 全程在内存里不落盘
+	"""用 MiMo 语音合成把文本转成 wav 字节
 	
-	失败或拿到空音频时返回 None 由调用方回退到文字发送
+	模型只朗读 assistant 角色的内容 语气指令放在 user 角色
+	非流式 一次请求拿完整音频 全程内存不落盘
+	
+	失败或拿到空音频时返回 None 由调用方回退到文字
 	"""
 	
-	buffer = bytearray()
+	messages = []
+	
+	if style:
+		messages.append({"role": "user", "content": style})
+	
+	messages.append({"role": "assistant", "content": text})
+	
+	body = {
+		"model"		: model,
+		"messages"	: messages,
+		"audio"		: {"format": "wav", "voice": voice},
+	}
 	
 	try:
-		communicate	= edge_tts.Communicate(text, voice, pitch=pitch, rate=rate)
+		async with httpx.AsyncClient(timeout=180.0) as client:
+			response = await client.post(
+				url,
+				headers	= {"Authorization": f"Bearer {key}"},
+				json	= body,
+			)
 		
-		async for chunk in communicate.stream():
-			if chunk["type"] == "audio":
-				buffer += chunk["data"]
+		if response.status_code != 200:
+			LOGGER.warning("语音合成失败 HTTP %s %s", response.status_code, response.text[:200])
+			return None
+		
+		buffer = base64.b64decode(response.json()["choices"][0]["message"]["audio"]["data"])
 	
 	except Exception:
-		LOGGER.warning("语音合成失败 回退到文字发送", exc_info=True)
+		LOGGER.warning("语音合成失败 回退到文字", exc_info=True)
 		return None
 	
 	if not buffer:
-		LOGGER.warning("语音合成返回空音频 回退到文字发送")
+		LOGGER.warning("语音合成返回空音频 回退到文字")
 		return None
 	
-	return bytes(buffer)
+	return buffer

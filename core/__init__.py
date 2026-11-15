@@ -1,5 +1,5 @@
 from .buffers		import ThreadBacklog
-from .tts			import synthesize
+from .tts			import synthesize, strip_tail_symbols
 from .corpus_writer	import CorpusWriter, to_record
 from .channel		import (
 	QQChannel,
@@ -22,6 +22,7 @@ __all__ = [
 
 	# tts
 	"synthesize",
+	"strip_tail_symbols",
 
 	# corpus_writer
 	"CorpusWriter",

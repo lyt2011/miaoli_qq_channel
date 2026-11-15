@@ -10,6 +10,7 @@
 
 ## 索引
 
+- [v0.9.0](CHANGELOG/v0.9.0.md) — 2026-11-15 — 🔊 语音合成从 `edge-tts` 换成 MiMo（音色 + `style` 语气指令走配置），语音前滤掉没有读音的尾巴符号（破坏性）
 - [v0.8.0](CHANGELOG/v0.8.0.md) — 2026-11-15 — 🔊 新增可选语音：每条回复掷一次骰子，命中就把整条回复合成一条 edge-tts 语音发出去
 - [v0.7.0](CHANGELOG/v0.7.0.md) — 2026-11-14 — 🧱 `easier_send` 与 `meme_ops` 从 `miaoli_bot` 迁入本仓库，另加可选语料录制（录制渲染后的文本，默认关）
 - [v0.6.1](CHANGELOG/v0.6.1.md) — 2026-11-12 — 🔤 `qq_platform_tools` 新增 `transcribe_qq_voice`，按消息 id 调 QQ 自带语音转文字

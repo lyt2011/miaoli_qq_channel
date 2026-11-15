@@ -3,7 +3,7 @@ from miaoli_bot.protocols	import BaseChannel, Content
 
 from ...consts				import READY_BUFFER, PLUGIN_CONFIG
 from ...utils				import easier_send
-from ..tts				import synthesize
+from ..tts				import strip_tail_symbols, synthesize
 from .qq_channel_message	import (
 	QQChannelMessage,
 	content_to_text,
@@ -67,8 +67,10 @@ class QQChannel(BaseChannel):
 		config    = store_recall(PLUGIN_CONFIG)
 		whole     = text.strip()
 		
-		# 长度门槛算的是说出来的字数 空行与空白不算 合成时仍发原文本保留吐字停顿
-		spoken    = "".join(whole.split())
+		# w 与爱心只有字形没有读音 语音送过滤后的 文字路径仍发原文
+		# 长度门槛算的是说出来的字数 空行空白与尾巴符号都不算
+		speaking  = strip_tail_symbols(whole)
+		spoken    = "".join(speaking.split())
 		
 		# 一次回复只掷一次骰子 命中就是整条语音 字节在内存里拼成 base64 不落盘
 		if (
@@ -78,10 +80,12 @@ class QQChannel(BaseChannel):
 		):
 			
 			audio = await synthesize(
-				text	= whole,
+				text	= speaking,
+				url		= config.voice.mimo_url,
+				key		= config.voice.mimo_key,
+				model	= config.voice.model,
 				voice	= config.voice.voice,
-				pitch	= config.voice.pitch,
-				rate	= config.voice.rate,
+				style	= config.voice.style,
 			)
 			
 			if audio is not None:

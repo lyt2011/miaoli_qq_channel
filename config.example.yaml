@@ -27,12 +27,14 @@ typing:                   # 打字延迟 base_speed=0 等价于关
   base_speed: 0.06        # 每个字的打字时间（秒）
   speed_offset: 0.02      # 每字速度偏移（须 < base_speed，否则每字时间可为负）
 
-voice:                    # 语音发送 按概率把一条文字换成 edge-tts 合成的语音
+voice:                    # 语音发送 按概率把一条文字换成 MiMo 语音合成的语音
   enable: false           # 开了才会发语音
   probability: 0.3        # 每一条改成语音的概率 0 到 1
-  voice: "zh-CN-XiaoyiNeural"   # edge-tts 音色全名
-  pitch: "+16Hz"          # 音调 例如 +16Hz / -10Hz
-  rate: "+0%"             # 语速 例如 +10% / -5%
+  mimo_url: "https://api.xiaomimimo.com/v1/chat/completions"   # MiMo 语音合成接口地址
+  mimo_key: ""            # MiMo 的 API Key 填在这里 不要提交到仓库
+  model: "mimo-v2.5-tts"  # 语音合成模型
+  voice: "冰糖"           # 预置音色 ID 可选 冰糖 茉莉 苏打 白桦 Mia Chloe Milo Dean
+  style: ""               # 语气指令 放在 user 角色 留空只传朗读文本
   min_chars: 10           # 不足这么多字的一条不转语音 直接发文字
   max_chars: 30           # 超过这么多字的一条不转语音 直接发文字
 
