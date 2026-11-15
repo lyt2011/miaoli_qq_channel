@@ -3,6 +3,7 @@ from .account			import AccountConfig
 from .message			import MessageConfig
 from .split_config		import SplitConfig
 from .typing_config		import TypingConfig
+from .voice_config		import VoiceConfig
 from .channel_config	import ChannelConfig
 from .corpus			import CorpusConfig
 
@@ -16,5 +17,6 @@ __all__ = [
 	"SubmitConfig",
 	"SplitConfig",
 	"TypingConfig",
+	"VoiceConfig",
 
 ]

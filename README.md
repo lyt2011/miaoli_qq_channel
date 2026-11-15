@@ -4,10 +4,10 @@
 
 把 QQ 事件缓冲成**消息通道**，供 [`miaoli_bot`](https://github.com/lyt2011/miaoli_bot) 读取。
 
-- **版本**：0.7.0
+- **版本**：0.8.0
 - **入口**：`main.py`（插件类 `MiaoLiQQChannel`）
 - **运行载体**：Ncatbot 插件系统（NapCat / OneBot 11）
-- **依赖**：`miaoli_bot >= 0.44.0`（`BaseChannel.platforms` 与 `reply(platform, thread_id, content)` 是 0.44.0 才有的；`to_text()` 在 0.44.0 已被删除）
+- **依赖**：`miaoli_bot >= 0.44.0`（`BaseChannel.platforms` 与 `reply(platform, thread_id, content)` 是 0.44.0 才有的；`to_text()` 在 0.44.0 已被删除）；可选依赖 `edge-tts`（只有开了 `voice.enable` 才需要）
 
 ## 定位
 
@@ -76,7 +76,9 @@ miaoli_qq_channel/
 │   │   ├── qq_channel_message.py  # QQChannelMessage / WakeMessage / is_addressed / thread_id 编制
 │   │   ├── render_event.py    # render_event(event)：元信息行 + 每段一行
 │   │   └── render_segment.py  # render_segment(segment)：单个消息段 → 一行
-│   └── corpus_writer.py       # CorpusWriter / to_record：消息事件 → 一行 JSONL
+│   ├── corpus_writer.py       # CorpusWriter / to_record：消息事件 → 一行 JSONL
+│   └── tts/
+│       └── synthesize.py      # synthesize(text, voice, pitch, rate)：edge-tts → mp3 字节
 ├── models/
 │   ├── plugin_config.py       # PluginConfig
 │   └── config/
@@ -85,7 +87,8 @@ miaoli_qq_channel/
 │       ├── message.py         # MessageConfig
 │       ├── submit.py          # SubmitConfig
 │       ├── split_config.py    # SplitConfig
-│       └── typing_config.py   # TypingConfig
+│       ├── typing_config.py   # TypingConfig
+│       └── voice_config.py    # VoiceConfig（语音发送）
 ├── utils/
 │   └── easier_send.py         # easier_send(mode, chat_id, ob11_message)：群 / 私聊发送
 └── plugins/                   # 挂在通道下的子插件
@@ -123,6 +126,15 @@ typing:                 # 打字延迟 base_speed=0 等价于关
   enable: true
   base_speed: 0.06      # 每个字的打字时间（秒）
   speed_offset: 0.02    # 每字速度偏移（须 < base_speed，否则每字时间可为负）
+
+voice:                  # 可选 按概率把整条回复换成一条语音
+  enable: false         # 开了才会发语音
+  probability: 0.3      # 每次回复掷一次骰子 命中就整条语音
+  voice: "zh-CN-XiaoyiNeural"   # edge-tts 音色全名
+  pitch: "+16Hz"         # 音调 例如 +16Hz / -10Hz
+  rate: "+0%"            # 语速 例如 +10% / -5%
+  min_chars: 10         # 说出来的字数不到这么多不发语音
+  max_chars: 30         # 说出来的字数超过这么多不发语音
 
 corpus:                 # 可选 语料录制 默认关
   enable: false         # 开了才写文件
@@ -174,6 +186,23 @@ await easier_send("group", 977469324, [{"type": "text", "data": {"text": "在的
 - `ob11_message` 是**消息段数组**（不是字符串）。`record` 段的 `file` 记得带 `file://` 前缀，NapCat 会自己转 SILK。
 - `ncatbot_api` 是给测试用的可替换入口，正常调用不用传 —— 不传就取主包放进共享容器的那个（`miaoli_bot.api.get_ncatbot_api()`）。
 - 本函数原先住在 `miaoli_bot.utils`，0.7.0 迁到这里：QQ 的发送细节归通道，主包不认识 QQ。
+
+## 语音（可选）
+
+默认关。`voice.enable` 为真时，**每条回复掷一次骰子**：命中就把整条回复交给 `edge-tts` 合成一条 mp3，再用 `record` 段发出去。
+
+| 决策 | 位置 |
+|---|---|
+| 骰子 | `qq_channel.py` 的 `reply()`，切分**之前**跑一次 `random()` |
+| 长度门槛 | `min_chars <= len(spoken) <= max_chars`，`spoken` 是去掉换行与空白后的字数 |
+| 合成 | `core/tts/synthesize.py`，`Communicate.stream()` 收 `type == "audio"` 的块，**全程内存不落盘** |
+| 发送 | `ob11_message = [{"type": "record", "data": {"file": "base64://<mp3>"}}]` |
+
+- 粒度是**整条回复**，不是一段。命中后不进 `split_text`，一条回复只发一条语音。
+- 长度门槛数的是**说出来的字**，空行与空格不算；合成时仍送原文本，换行造成的停顿会保留。
+- 任一环节失败（合成异常、空音频、NapCat 拒收）都 `warning` 一笔然后**回退到按段文字的原有路径**，消息不会丢。
+- 语音那条不补打字延迟 —— 合成本身就花掉了时间。
+- 只能调 `rate` / `pitch` / `volume` 三个口子；Azure 的 `style`（cheerful / sad / angry 之类）edge-tts 不暴露。
 
 ## 语料录制（可选）
 
@@ -274,3 +303,4 @@ miaoli_qq_channel/core.ready_buffer         就绪区（list）
 - **同名会话已在排队时不合并**：新消息留在积压区，等那个窗口被主包取走之后才开下一个窗。所以对话密集时一个会话会被切成多个窗口。
 - **语料只记渲染后的文本**：`to_record` 用的是 `render_event()` 的输出，图片只剩一个 URL、转发只剩条数，原始 ob11 结构不进语料。要训练格式数据得先改这里。
 - **`meme_ops` 的 `help_doc.path` 是绝对路径**：本机示例写的是 `/sdcard/Ncatbot_QQ/plugins/miaoli_qq_channel/plugins/meme_ops/data/meme_helper.md`，换到服务器（`/root/Ncatbot_QQ/...`）必须跟着改；改错不报错，只是帮助文档不注入。`config.example.yaml` 用的是 `$workspace/data/meme_helper.md`，照模板复制就不会踩。
+- **语音的 `base64://` 只验证到 NapCat 之前**：单机合成、字节拼段、`reply` 回退逻辑都有测试，但 NapCat 收不收一段 20~40 KB 的 `base64://` 还没在真机跑过。收不下会在日志里留一条 `语音发送失败 回退到文字`，回退到 `file://` 要写盘加清理，目前没做。

@@ -3,6 +3,7 @@ from miaoli_bot.protocols	import BaseChannel, Content
 
 from ...consts				import READY_BUFFER, PLUGIN_CONFIG
 from ...utils				import easier_send
+from ..tts				import synthesize
 from .qq_channel_message	import (
 	QQChannelMessage,
 	content_to_text,
@@ -12,8 +13,13 @@ from .qq_channel_message	import (
 
 from typing	import FrozenSet, List
 
+import base64
 import random
 import asyncio
+import logging
+
+
+LOGGER = logging.getLogger("QQChannel")
 
 
 class QQChannel(BaseChannel):
@@ -47,7 +53,11 @@ class QQChannel(BaseChannel):
 	
 	async def reply(self, platform: str, thread_id: str, content: Content) -> None:
 		
-		"""按会话标识把正文发回 QQ 分隔符切分成多条消息 每段按配置模拟打字"""
+		"""按会话标识把正文发回 QQ 分隔符切分成多条消息 每段按配置模拟打字
+		
+		语音的粒度是整条回复 命中就合成一条语音发出去 不再切分
+		太长或太短 以及合成与发送失败都回退到原来的按段文字
+		"""
 		
 		if platform not in self.platforms:
 			raise ValueError(f"QQ 通道不支持平台: {platform}")
@@ -55,12 +65,47 @@ class QQChannel(BaseChannel):
 		text  = content_to_text(content)
 		mode, chat_id  = split_thread_id(thread_id)
 		config    = store_recall(PLUGIN_CONFIG)
+		whole     = text.strip()
+		
+		# 长度门槛算的是说出来的字数 空行与空白不算 合成时仍发原文本保留吐字停顿
+		spoken    = "".join(whole.split())
+		
+		# 一次回复只掷一次骰子 命中就是整条语音 字节在内存里拼成 base64 不落盘
+		if (
+			config.voice.enable
+			and config.voice.min_chars <= len(spoken) <= config.voice.max_chars
+			and random.random() < config.voice.probability
+		):
+			
+			audio = await synthesize(
+				text	= whole,
+				voice	= config.voice.voice,
+				pitch	= config.voice.pitch,
+				rate	= config.voice.rate,
+			)
+			
+			if audio is not None:
+				
+				# 合成花了时间 不再补打字延迟
+				try:
+					await easier_send(
+						mode		= mode,
+						chat_id		= chat_id,
+						ob11_message	= [{
+							"type": "record",
+							"data": {"file": f"base64://{base64.b64encode(audio).decode()}"},
+						}],
+					)
+					return
+				
+				except Exception:
+					LOGGER.warning("语音发送失败 回退到文字", exc_info=True)
 		
 		if config.split.enable:
 			pieces = split_text(text, config.split.delimiter)
 		
 		else:
-			pieces = [text.strip()] if text.strip() else []
+			pieces = [whole] if whole else []
 		
 		for piece in pieces:
 			

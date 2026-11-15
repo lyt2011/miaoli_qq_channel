@@ -8,6 +8,7 @@ from .config	import (
 	SplitConfig,
 	SubmitConfig,
 	TypingConfig,
+	VoiceConfig,
 )
 
 
@@ -23,3 +24,4 @@ class PluginConfig(BaseModel):
 	submit	: SubmitConfig	= Field(default_factory=SubmitConfig, description="扫描配置")
 	split	: SplitConfig	= Field(default_factory=SplitConfig, description="输出分割配置")
 	typing	: TypingConfig	= Field(default_factory=TypingConfig, description="打字速度配置")
+	voice	: VoiceConfig	= Field(default_factory=VoiceConfig, description="语音发送配置")

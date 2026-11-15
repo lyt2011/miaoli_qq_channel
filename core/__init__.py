@@ -1,4 +1,5 @@
 from .buffers		import ThreadBacklog
+from .tts			import synthesize
 from .corpus_writer	import CorpusWriter, to_record
 from .channel		import (
 	QQChannel,
@@ -18,6 +19,9 @@ __all__ = [
 
 	# buffers
 	"ThreadBacklog",
+
+	# tts
+	"synthesize",
 
 	# corpus_writer
 	"CorpusWriter",
