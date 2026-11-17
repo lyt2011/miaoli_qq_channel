@@ -18,18 +18,17 @@ submit:
   chance: 0.05            # 没人叫我时 每条消息尝试随机开窗帘概率
   cooldown: 120.0         # 随机开窗冷却（秒） 从上次开成算起
 
-split:                    # 输出分割 enable=true 时 delimiter 必须非空
+split:                    # 输出分割 按空行切成几条就发几条
   enable: true
-  delimiter: "\n\n"
 
 typing:                   # 打字延迟 base_speed=0 等价于关
   enable: true
   base_speed: 0.06        # 每个字的打字时间（秒）
   speed_offset: 0.02      # 每字速度偏移（须 < base_speed，否则每字时间可为负）
 
-voice:                    # 语音发送 按概率把一条文字换成 MiMo 语音合成的语音
+voice:                    # 语音发送 按概率把整条回复的每一条都换成 MiMo 语音
   enable: false           # 开了才会发语音
-  probability: 0.3        # 每一条改成语音的概率 0 到 1
+  probability: 0.3        # 每条回复改成语音的概率 0 到 1 命中后按空行逐条各合成一段
   mimo_url: "https://api.xiaomimimo.com/v1/chat/completions"   # MiMo 语音合成接口地址
   mimo_key: ""            # MiMo 的 API Key 填在这里 不要提交到仓库
   model: "mimo-v2.5-tts"  # 语音合成模型

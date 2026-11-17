@@ -4,10 +4,10 @@
 
 把 QQ 事件缓冲成**消息通道**，供 [`miaoli_bot`](https://github.com/lyt2011/miaoli_bot) 读取。
 
-- **版本**：0.9.0
+- **版本**：0.10.0
 - **入口**：`main.py`（插件类 `MiaoLiQQChannel`）
 - **运行载体**：Ncatbot 插件系统（NapCat / OneBot 11）
-- **依赖**：`miaoli_bot >= 0.44.0`（`BaseChannel.platforms` 与 `reply(platform, thread_id, content)` 是 0.44.0 才有的；`to_text()` 在 0.44.0 已被删除）；可选依赖 `httpx`（只有开了 `voice.enable` 才需要）
+- **依赖**：`miaoli_bot >= 0.44.0`（`BaseChannel.platforms` 与 `reply(platform, thread_id, content)` 是 0.44.0 才有的；`to_text()` 在 0.44.0 已被删除）；必需依赖 `markdown` 与 `beautifulsoup4`（`reply` 剥 markdown 用）；可选依赖 `httpx`（只有开了 `voice.enable` 才需要）
 
 ## 定位
 
@@ -40,7 +40,7 @@ QQChannelMessage（thread_id / platform / to_content）
   ↓  主包 tick + 通道的 please_run_graph() 唤醒
 GraphState.messages（一条 HumanMessage = to_content()）
   ↓  跑完把末条 AIMessage 交回来
-QQChannel.reply(platform, thread_id, content)      按空行切分后逐条发回 QQ
+QQChannel.reply(platform, thread_id, content)      剥 markdown → 按空行切条 → 逐条发回 QQ
 ```
 
 两级缓冲的分工：
@@ -77,6 +77,8 @@ miaoli_qq_channel/
 │   │   ├── render_event.py    # render_event(event)：元信息行 + 每段一行
 │   │   └── render_segment.py  # render_segment(segment)：单个消息段 → 一行
 │   ├── corpus_writer.py       # CorpusWriter / to_record：消息事件 → 一行 JSONL
+│   ├── markdown/
+│   │   └── strip_markdown.py  # strip_markdown(text)：markdown → 正文，换行结构原样保留
 │   └── tts/
 │       ├── strip_tail_symbols.py  # strip_tail_symbols(text)：滤掉没有读音的尾巴符号
 │       └── synthesize.py      # synthesize(text, url, key, model, voice, style)：MiMo → wav 字节
@@ -119,9 +121,8 @@ submit:
   chance: 0.05          # 没人叫我时 每条消息尝试随机开窗的概率
   cooldown: 120.0       # 随机开窗冷却（秒） 从上次开成算起
 
-split:                  # 输出分割 enable=true 时 delimiter 必须非空
+split:                  # 输出分割 按空行切成几条就发几条
   enable: true
-  delimiter: "\n\n"
 
 typing:                 # 打字延迟 base_speed=0 等价于关
   enable: true
@@ -175,6 +176,16 @@ push_wake_message("group-123456", "现在是晚上十点，主动说一句晚安
 - 就绪区满了 / 该会话已在排队 → 返回 `False`，属于瞬态反压，下一轮再来。
 - `thread_id` 必须是合法会话标识（`group-<群号>` / `private-<QQ号>`），否则 `raise ValueError`。
 
+## 回复前处理（剥 markdown / 分条 / 去句号）
+
+`reply` 拿到正文后先把三件事做完，语音与文字两条路都在它之后：
+
+1. **剥 markdown** —— `core/markdown/strip_markdown.py`。先用 `markdown` 渲染成 HTML（开 `nl2br`，源文本里的单换行落成 `<br>`），再用 BeautifulSoup 取纯文本；块级元素收尾补空行、行级元素收尾补单换行，所以**单换行还是单换行、空行还是空行**，下游按空行分条不受影响。图片留 `alt`、代码块留正文、表格塌成一行一行的文本；`<(￣︶￣)>` 这类以 `<` 开头的颜文字在渲染前先转义，不会被当成 HTML 标签连内容一起吞掉。
+2. **分条** —— 按空行（`\n\n`）切，切成几条就发几条，空段丢掉；`split.enable: false` 时整条发一条。
+3. **去句号** —— 文字路上每一条以 `。` 结尾就把这个句号去掉再发（`endswith("。")` 判断，只去一个）；语音路不动。
+
+剥标记放在语音分支**之前**：语音读的是剥过的正文，长度门槛数的也是剥过的字数。
+
 ## 发送
 
 `reply` 之外要主动发东西（发图、发语音、@ 人、发到别的会话），用 `utils` 里的 `easier_send`：
@@ -192,21 +203,22 @@ await easier_send("group", 977469324, [{"type": "text", "data": {"text": "在的
 
 ## 语音（可选）
 
-默认关。`voice.enable` 为真时，**每条回复掷一次骰子**：命中就把整条回复交给 MiMo 语音合成出一条 wav，再用 `record` 段发出去。
+默认关。`voice.enable` 为真时，**每条回复掷一次骰子**：命中就把这条回复按空行切开，**每一条各自合成一段 wav**，再用 `record` 段逐条发出去。
 
 | 决策 | 位置 |
 |---|---|
-| 骰子 | `qq_channel.py` 的 `reply()`，切分**之前**跑一次 `random()` |
+| 骰子 | `qq_channel.py` 的 `reply()`，**每条回复只掷一次**，命中才进语音分支 |
 | 长度门槛 | `min_chars <= len(spoken) <= max_chars`，`spoken` 是过滤尾巴符号并去掉换行空白后的字数 |
 | 尾巴过滤 | `core/tts/strip_tail_symbols.py`，只作用于语音分支 |
 | 合成 | `core/tts/synthesize.py`，非流式一次 `POST`，读 `choices[0].message.audio.data` 解 base64，**全程内存不落盘** |
 | 发送 | `ob11_message = [{"type": "record", "data": {"file": "base64://<wav>"}}]` |
 
-- 粒度是**整条回复**，不是一段。命中后不进 `split_text`，一条回复只发一条语音。
+- 粒度是**一条一条**：命中后按空行切开的每一条各合成各发，几条正文就是几条语音消息。
+- **门槛仍按整条算**：`min_chars <= len(spoken) <= max_chars` 判的是整条回复说出来的字数，不是每一条；判过了才逐条合成，所以单条可能远短于 `min_chars`。
 - 长度门槛数的是**说出来的字**：`w` 与爱心类符号（`♡♥❤💕💗`）只有字形没有读音，先滤掉再数；空行与空格也不算。合成时送的是过滤后的原文本，换行造成的停顿保留。
 - **文字路径不过滤**：没命中语音时 `♡` / `w` 原样发出去。`w` 只在当尾巴用时才删（后面接标点或收尾，且前面不贴 ASCII 字母数字），`wifi` / `www.example.com` / `p≧w≦q` 不会被误伤。
-- 任一环节失败（合成异常、空音频、NapCat 拒收）都 `warning` 一笔然后**回退到按段文字的原有路径**，消息不会丢。
-- 语音那条不补打字延迟 —— 合成本身就花掉了时间。
+- 任一条失败（合成异常、空音频、NapCat 拒收）都 `warning` 一笔，然后**只把这一条换成文字补发**，其余几条照旧走语音，不整条重发。
+- 语音不补打字延迟 —— 合成本身就花掉了时间；回退成文字的那一条照常补。
 - 模型只朗读 `assistant` 角色的内容，`style` 放 `user` 角色 —— 这是 MiMo 的调用约定，写进 `synthesize` 里了；`style` 留空就只传朗读文本。
 - 音色由 `voice`（预置 ID）决定，`style` 改不动音色，只影响语速、音高走势、停顿与情绪。
 - `voicedesign` / `voiceclone` 试过就放弃了：同一个描述或同一段样本跑两次，出来的人耳可辨不同，固定不住音色，所以只用预置音色。
@@ -311,4 +323,4 @@ miaoli_qq_channel/core.ready_buffer         就绪区（list）
 - **语料只记渲染后的文本**：`to_record` 用的是 `render_event()` 的输出，图片只剩一个 URL、转发只剩条数，原始 ob11 结构不进语料。要训练格式数据得先改这里。
 - **`meme_ops` 的 `help_doc.path` 是绝对路径**：本机示例写的是 `/sdcard/Ncatbot_QQ/plugins/miaoli_qq_channel/plugins/meme_ops/data/meme_helper.md`，换到服务器（`/root/Ncatbot_QQ/...`）必须跟着改；改错不报错，只是帮助文档不注入。`config.example.yaml` 用的是 `$workspace/data/meme_helper.md`，照模板复制就不会踩。
 - **语音的 `base64://` 只验证到 NapCat 之前**：单机合成、字节拼段、`reply` 回退逻辑都有测试，但 NapCat 收不收一段 60~90 KB 的 `base64://<wav>` 还没在真机跑过。收不下会在日志里留一条 `语音发送失败 回退到文字`，回退到 `file://` 要写盘加清理，目前没做。
-- **合成延迟 7~15 秒**：MiMo 非流式要等整段推理完，10~30 字的一条通常 7~15 秒，偶发上百秒。命中语音的那条回复会明显晚于正常打字节奏发出。
+- **合成延迟 7~15 秒**：MiMo 非流式要等整段推理完，10~30 字的一条通常 7~15 秒，偶发上百秒。现在按条合成，三条就是三次串起来的等待，命中语音的回复会比整条合成时更慢。
