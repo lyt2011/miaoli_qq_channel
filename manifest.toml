@@ -1,5 +1,5 @@
 name = "miaoli_qq_channel"
-version = "0.10.0"
+version = "0.11.0"
 main = "main.py"
 author = "超·乃依"
 description = "把 QQ 事件缓冲成消息通道，供 miaoli_bot 读取"
@@ -7,4 +7,4 @@ entry_class = "MiaoLiQQChannel"
 pip_dependencies = { markdown = ">=3.5", beautifulsoup4 = ">=4.12" }
 
 [dependencies]
-miaoli_bot = ">=0.44.0"
+miaoli_bot = ">=0.58.0"

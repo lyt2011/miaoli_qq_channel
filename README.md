@@ -7,7 +7,7 @@
 - **版本**：0.10.0
 - **入口**：`main.py`（插件类 `MiaoLiQQChannel`）
 - **运行载体**：Ncatbot 插件系统（NapCat / OneBot 11）
-- **依赖**：`miaoli_bot >= 0.44.0`（`BaseChannel.platforms` 与 `reply(platform, thread_id, content)` 是 0.44.0 才有的；`to_text()` 在 0.44.0 已被删除）；必需依赖 `markdown` 与 `beautifulsoup4`（`reply` 剥 markdown 用）；可选依赖 `httpx`（只有开了 `voice.enable` 才需要）
+- **依赖**：`miaoli_bot >= 0.58.0`（`meme_ops` 依赖其 `human_injector` 子插件；`BaseChannel.platforms` 与 `reply(platform, thread_id, content)` 是 0.44.0 才有的，`to_text()` 在 0.44.0 已被删除）；必需依赖 `markdown` 与 `beautifulsoup4`（`reply` 剥 markdown 用）；可选依赖 `httpx`（只有开了 `voice.enable` 才需要）
 
 ## 定位
 
@@ -248,7 +248,7 @@ await easier_send("group", 977469324, [{"type": "text", "data": {"text": "在的
 | 插件 | 作用 |
 |---|---|
 | `account_injector` | 读通道的 `account` 段，把管理员 / 机器人的 QQ 号与昵称拼成 `prompts` 的 `account-info` 段 |
-| `meme_ops` | 表情包素材库：归档 / 发送 / 按 hash 删除（sqlite）。0.7.0 从 `miaoli_bot/plugins/` 迁入 —— 它发送时依赖 `easier_send`，本来就是 QQ 专属 |
+| `meme_ops` | 表情包素材库：归档 / 发送 / 按 hash 删除（sqlite）。0.7.0 从 `miaoli_bot/plugins/` 迁入 —— 它发送时依赖 `easier_send`，本来就是 QQ 专属；0.11.0 起可用表情清单写进 `human_injector` 的注入表（依赖该子插件），`meme-helper` 帮助文档仍走 `prompts` |
 | `qq_platform_tools` | 发消息 / 收文件 / 查消息 / 撤回 / 戳一戳 / 语音转文字 |
 
 子插件由 `miaoli_bot` 的 `Loader` 加载 —— 本插件自己不带加载器。`config.yaml` 的 `sub_plugin.load_from` 需要同时包含两个目录：
