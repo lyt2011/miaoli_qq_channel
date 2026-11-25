@@ -23,20 +23,14 @@ class SocialConfig(BaseModel):
 	enabled		: bool	= Field(default=True, description="是否启用状态机；关闭后退回「被叫即提交」的旧行为")
 	tick_seconds: float	= Field(default=1.0, description="调度器 tick 间隔（秒）", gt=0, le=10)
 	quiet		: float	= Field(default=8.0, description="静默窗口（秒）连续这么久没有新消息才提交", ge=0, le=120)
-	follow_up	: bool	= Field(default=False, description="聊天中状态下普通消息安静后是否自动跟一句；默认关，关掉后只有被叫或随机概率才开窗")
-	follow_quiet	: float	= Field(default=30.0, description="跟随需要多长的静默（秒）；比 quiet 长，避免跟着别人的每句话抢话", ge=0, le=600)
-	follow_min_unread	: int	= Field(default=2, description="跟随至少积了多少条未读才开口", ge=1, le=50)
 	
 	chance		: float	= Field(default=0.05, description="潜水时普通消息的随机唤醒概率", ge=0, le=1)
 	chance_cooldown_seconds	: float	= Field(default=120.0, description="随机唤醒成功后的冷却（秒）", ge=0)
 	
 	max_submit_per_minute	: int	= Field(default=1, description="每个会话每分钟最多提交几次", ge=1, le=60)
 	max_submit_per_hour		: int	= Field(default=12, description="每个会话每小时最多提交几次", ge=1, le=600)
-	speak_cooldown_seconds	: float	= Field(default=300.0, description="距上次成功发言的冷却（秒）；跟随间隔主要由它控制", ge=0, le=7200)
 	
-	active_min_minutes	: int	= Field(default=15, description="聊天状态最短持续（分钟）", ge=1, le=240)
-	active_max_minutes	: int	= Field(default=30, description="聊天状态最长持续（分钟）", ge=1, le=480)
-	idle_minutes		: int	= Field(default=6, description="聊天状态下多久没人说话就回潜水（分钟）", ge=1, le=240)
+	idle_minutes		: int	= Field(default=6, description="聊天状态（含跟随）多久没人说话就回潜水（分钟）", ge=1, le=240)
 	
 	in_flight_timeout_seconds	: float	= Field(default=240.0, description="在途窗口超时（秒）超了就放行下一轮", ge=10, le=3600)
 	

@@ -73,33 +73,37 @@ def test_active_session_does_not_follow_up_by_default(monkeypatch):
 		assert store.decide("group-1", now, config) is None
 
 
-def test_active_session_follows_up_when_enabled(monkeypatch):
+def test_following_session_submits_without_quiet(monkeypatch):
 	store = quiet_store(monkeypatch)
-	config = make_config(follow_up=True, follow_quiet=8.0, speak_cooldown_seconds=60.0)
+	config = make_config(enable_follow=True)
 	session = store.session("group-1")
 	session.state = ChatState.ACTIVE
+	session.follow_until = 200.0
 	session.last_message_at = 100.0
 	session.last_reply_at = 100.0
 	
-	# 静默没到
-	assert store.decide("group-1", 103.0, config) is None
-	# 静默到了但刚说完话
-	assert store.decide("group-1", 109.0, config) is None
-	# 冷却过了
-	assert store.decide("group-1", 161.0, config).reason is WakeReason.ACTIVE
+	# 跟随不吃 quiet 和发言冷却：下个 tick 就判定为 FOLLOW
+	assert store.decide("group-1", 100.5, config).reason is WakeReason.FOLLOW
 
 
-def test_follow_up_uses_its_own_quiet_window(monkeypatch):
+def test_follow_uses_its_own_rate_limits(monkeypatch):
 	store = quiet_store(monkeypatch)
-	config = make_config(follow_up=True, follow_quiet=30.0, speak_cooldown_seconds=0.0)
+	config = make_config(
+		enable_follow=True,
+		follow_min_interval_seconds=5.0,
+		follow_max_submit_per_minute=2,
+	)
 	session = store.session("group-1")
 	session.state = ChatState.ACTIVE
-	session.last_message_at = 100.0
-	session.last_reply_at = 100.0
+	session.follow_until = 200.0
+	decision = state.WakeDecision(WakeReason.FOLLOW, 0, 100.0)
 	
-	# 比 quiet(8s) 长很多的跟随静默：31 秒刚够 30 秒
-	assert store.decide("group-1", 120.0, config) is None
-	assert store.decide("group-1", 131.0, config).reason is WakeReason.ACTIVE
+	store.on_submit("group-1", 100.0, decision, config)
+	session.in_flight = False
+	
+	# 跟随最小间隔 5 秒
+	assert not store.can_submit("group-1", 103.0, config)
+	assert store.can_submit("group-1", 106.0, config)
 
 
 def test_submit_rate_limit_is_per_minute_and_private_is_exempt(monkeypatch):
@@ -107,7 +111,7 @@ def test_submit_rate_limit_is_per_minute_and_private_is_exempt(monkeypatch):
 	config = make_config(max_submit_per_minute=1)
 	decision = state.WakeDecision(WakeReason.AT, 100, 100.0)
 	
-	store.on_submit("group-1", 100.0, decision)
+	store.on_submit("group-1", 100.0, decision, config)
 	store.session("group-1").in_flight = False
 	assert not store.can_submit("group-1", 110.0, config)
 	assert store.can_submit("group-1", 161.0, config)
@@ -118,7 +122,7 @@ def test_reply_finished_records_speech_and_resets_in_flight(monkeypatch):
 	store = quiet_store(monkeypatch)
 	config = make_config()
 	decision = state.WakeDecision(WakeReason.AT, 100, 100.0)
-	store.on_submit("group-1", 100.0, decision)
+	store.on_submit("group-1", 100.0, decision, config)
 	
 	store.on_reply_finished("group-1", True, 130.0, config)
 	session = store.session("group-1")

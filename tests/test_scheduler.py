@@ -129,35 +129,45 @@ def test_active_state_does_not_follow_up_by_default(monkeypatch):
 	assert harness.ready == []
 
 
-def test_active_state_follows_up_when_enabled(monkeypatch):
-	harness = Harness(monkeypatch, follow_up=True, follow_quiet=8.0, speak_cooldown_seconds=60.0, follow_min_unread=1)
+def test_following_thread_submits_next_tick(monkeypatch):
+	harness = Harness(monkeypatch, enable_follow=True)
+	harness.feed(FakeEvent(at_me=True), True, 100.0)
+	assert harness.scheduler.tick(now=109.0) == 1
+	harness.drain()
+	harness.social.on_reply_finished("group-1", True, 110.0, harness.config)
+	
+	# 跟随中不吃 quiet：消息到了下个 tick 就交，理由=跟随
+	harness.feed(FakeEvent(text="然后呢"), False, 111.0)
+	assert harness.scheduler.tick(now=112.0) == 1
+	assert harness.ready[0].reason is WakeReason.FOLLOW
+
+
+def test_follow_interval_blocks_next_tick(monkeypatch):
+	harness = Harness(monkeypatch, enable_follow=True, follow_min_interval_seconds=10.0)
+	harness.feed(FakeEvent(at_me=True), True, 100.0)
+	assert harness.scheduler.tick(now=109.0) == 1
+	harness.drain()
+	harness.social.on_reply_finished("group-1", True, 110.0, harness.config)
+	
+	harness.feed(FakeEvent(text="然后呢"), False, 111.0)
+	# 距上次提交只过了 3 秒，被跟随最小间隔挡住
+	assert harness.scheduler.tick(now=112.0) == 0
+	assert harness.scheduler.tick(now=120.0) == 1
+
+
+def test_follow_expires_after_duration(monkeypatch):
+	harness = Harness(monkeypatch, enable_follow=True, follow_duration_minutes=1)
 	harness.feed(FakeEvent(at_me=True), True, 100.0)
 	harness.scheduler.tick(now=109.0)
 	harness.drain()
-	harness.social.on_reply_finished("group-1", True, 120.0, harness.config)
+	harness.social.on_reply_finished("group-1", True, 110.0, harness.config)
 	
-	harness.feed(FakeEvent(text="然后呢"), False, 200.0)
-	assert harness.scheduler.tick(now=203.0) == 0
-	assert harness.scheduler.tick(now=209.0) == 1
-	assert harness.ready[0].reason is WakeReason.ACTIVE
-
-
-def test_follow_up_needs_enough_unread(monkeypatch):
-	harness = Harness(monkeypatch, follow_up=True, follow_quiet=8.0, speak_cooldown_seconds=0.0, follow_min_unread=2)
-	harness.feed(FakeEvent(at_me=True), True, 100.0)
-	harness.scheduler.tick(now=109.0)
-	harness.drain()
-	harness.social.on_reply_finished("group-1", True, 120.0, harness.config)
-	
-	# 只有一条未读：不跟
-	harness.feed(FakeEvent(text="然后呢"), False, 200.0)
-	assert harness.scheduler.tick(now=209.0) == 0
+	# 110 + 60 秒后跟随到期 回潜水，普通消息重新走 quiet/chance
+	harness.feed(FakeEvent(text="还在吗"), False, 200.0)
+	for now in (202.0, 210.0, 260.0):
+		assert harness.scheduler.tick(now=now) == 0
 	assert harness.ready == []
-	
-	# 攒到两条：才跟
-	harness.feed(FakeEvent(text="说话啊"), False, 210.0)
-	assert harness.scheduler.tick(now=220.0) == 1
-	assert harness.ready[0].reason is WakeReason.ACTIVE
+	assert harness.social.session("group-1").state.value == "diving"
 
 
 def test_ready_buffer_dedupes_same_thread(monkeypatch):

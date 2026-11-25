@@ -15,7 +15,7 @@ class WakeReason(StrEnum):
 	QUESTION	= "question"
 	QUOTE		= "quote"
 	CHANCE		= "chance"
-	ACTIVE		= "active"
+	FOLLOW		= "follow"
 
 
 REASON_LABEL = {
@@ -25,7 +25,7 @@ REASON_LABEL = {
 	WakeReason.QUESTION	: "看起来在问 AI",
 	WakeReason.QUOTE	: "消息被引用",
 	WakeReason.CHANCE	: "随机开窗",
-	WakeReason.ACTIVE	: "聊天状态跟一句",
+	WakeReason.FOLLOW	: "跟随中接话",
 }
 
 PRIORITY = {
@@ -35,7 +35,7 @@ PRIORITY = {
 	WakeReason.QUESTION	: 60,
 	WakeReason.QUOTE	: 50,
 	WakeReason.CHANCE	: 10,
-	WakeReason.ACTIVE	: 0,
+	WakeReason.FOLLOW	: 0,
 }
 
 # 像在问 AI 的句子 只做粗判定 宁可漏判也别误判

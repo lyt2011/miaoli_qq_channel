@@ -4,7 +4,7 @@ import asyncio
 import time
 import logging
 
-from .policy	import REASON_LABEL, WakeReason
+from .policy	import REASON_LABEL
 from .state		import SocialStore
 
 
@@ -86,9 +86,10 @@ class Scheduler:
 		if session.in_flight:
 			return False
 		
-		# 静默没到 等下一轮
-		if now - self.buffers.last_message_at(thread_id) < config.social.quiet:
-			return False
+		# 静默没到 等下一轮；跟随中的会话不走这条 下个 tick 就交
+		if not social.is_following(thread_id, config, now):
+			if now - self.buffers.last_message_at(thread_id) < config.social.quiet:
+				return False
 		
 		# 就绪区里已经有这个会话 或已经满了
 		if any(getattr(message, "thread_id", "") == thread_id for message in self.ready):
@@ -103,10 +104,6 @@ class Scheduler:
 		if decision is None:
 			return False
 		
-		# 跟一句要攒够几条未读 免得对着单条消息抢话
-		if decision.reason is WakeReason.ACTIVE and self.buffers.count(thread_id) < config.social.follow_min_unread:
-			return False
-		
 		entries = self.buffers.take(thread_id, limit=config.snapshot.unread_limit)
 		if not entries:
 			return False
@@ -114,7 +111,7 @@ class Scheduler:
 		delivered = self.buffers.delivered_seq(thread_id)
 		message = self.make_message(entries, 0, decision.reason, delivered)
 		self.ready.append(message)
-		social.on_submit(thread_id, now, decision)
+		social.on_submit(thread_id, now, decision, config)
 		self.notify()
 		
 		LOGGER.info(

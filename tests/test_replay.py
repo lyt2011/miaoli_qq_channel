@@ -108,18 +108,19 @@ def test_addressed_wake_then_plain_chat_does_not_reopen(monkeypatch):
 	assert replay.submits == [8.0]
 
 
-def test_follow_up_when_enabled_is_rate_limited(monkeypatch):
-	replay = Replay(monkeypatch, follow_up=True, follow_quiet=8.0, speak_cooldown_seconds=60.0, follow_min_unread=1)
+def test_follow_replies_next_tick_but_rate_limited(monkeypatch):
+	replay = Replay(monkeypatch, enable_follow=True)
 	
 	replay.say("喵璃在吗", addressed=True, at_me=True)
 	replay.run(10.0)
 	assert replay.submits == [8.0]
 	
+	# 跟随中：消息到了下个 tick 就交 但受 2/分 与最小间隔约束
 	for index in range(24):
 		replay.say(f"接着聊 {index}", addressed=False)
 		replay.run(10.0)
 	
-	assert 2 <= len(replay.submits) <= 5
+	assert 2 <= len(replay.submits) <= 10
 	assert len(replay.submits) < 24
 
 

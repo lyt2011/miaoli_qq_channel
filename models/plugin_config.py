@@ -5,6 +5,7 @@ from .config	import (
 	ChannelConfig,
 	CorpusConfig,
 	DeliveryConfig,
+	FollowConfig,
 	MessageConfig,
 	SnapshotConfig,
 	SocialConfig,
@@ -24,6 +25,7 @@ class PluginConfig(BaseModel):
 	channel	: ChannelConfig	= Field(default_factory=ChannelConfig, description="渠道配置")
 	corpus	: CorpusConfig	= Field(default_factory=CorpusConfig, description="语料记录配置")
 	delivery: DeliveryConfig	= Field(default_factory=DeliveryConfig, description="发送节流配置")
+	follow	: FollowConfig	= Field(default_factory=FollowConfig, description="跟随模式配置")
 	message	: MessageConfig	= Field(default_factory=MessageConfig, description="消息配置")
 	snapshot: SnapshotConfig	= Field(default_factory=SnapshotConfig, description="未读快照配置")
 	social	: SocialConfig	= Field(default_factory=SocialConfig, description="会话状态机配置")

@@ -43,6 +43,7 @@ class SessionSocial:
 	state				: ChatState			= ChatState.DIVING
 	state_since			: float				= 0.0
 	active_until		: float				= 0.0
+	follow_until		: float				= 0.0
 	pending				: Optional[WakeDecision]	= None
 	chance_rolled_at	: float				= float("-inf")
 	submitted			: Deque[float]		= field(default_factory=deque)
@@ -92,7 +93,7 @@ class SocialStore:
 		reason = classify(entry.event, entry.addressed, social.wake, config.account.bot_id)
 		if reason is not None:
 			session.pending = WakeDecision(reason, PRIORITY[reason], now)
-			self._enter_active(session, social, now)
+			self._enter_active(session, config, now)
 			return reason
 		
 		# 潜水时才摇随机 私聊不摇
@@ -113,32 +114,33 @@ class SocialStore:
 		if session.pending is not None:
 			return session.pending
 		
-		social = config.social
-		if session.state is not ChatState.ACTIVE or not social.follow_up:
+		if not self.is_following(thread_id, config, now):
 			return None
 		
-		# 跟随比被叫的静默更长 免得别人每句话都接
-		if now - session.last_message_at < social.follow_quiet:
-			return None
-		
-		# 刚说完话先闭嘴一会儿 私聊不受这条限制
-		if not is_private_thread(thread_id):
-			if now - session.last_reply_at < social.speak_cooldown_seconds:
-				return None
-		
-		return WakeDecision(WakeReason.ACTIVE, PRIORITY[WakeReason.ACTIVE], now)
+		# 跟随里的消息不走缓冲区默认静默/随机策略 下个 tick 就交 由跟随自己的限流兜底
+		return WakeDecision(WakeReason.FOLLOW, PRIORITY[WakeReason.FOLLOW], now)
 	
 	def can_submit(self, thread_id: str, now: float, config: Any) -> bool:
 		
-		"""每个会话的提交频率上限 私聊无限"""
+		"""每个会话的提交频率上限 私聊无限 跟随时用跟随自己的限流"""
 		
 		if is_private_thread(thread_id):
 			return True
 		
 		session	= self.session(thread_id)
-		social	= config.social
-		
 		self._prune_stamps(session.submitted, now)
+		
+		if self.is_following(thread_id, config, now):
+			follow = config.follow
+			if session.submitted and now - session.submitted[-1] < follow.min_interval_seconds:
+				return False
+			recent_minute = sum(1 for stamp in session.submitted if now - stamp < MINUTE_SECONDS)
+			if recent_minute >= follow.max_submit_per_minute:
+				return False
+			recent_hour = sum(1 for stamp in session.submitted if now - stamp < HOUR_SECONDS)
+			return recent_hour < follow.max_submit_per_hour
+		
+		social	= config.social
 		
 		if len(session.submitted) >= social.max_submit_per_minute:
 			recent = sum(1 for stamp in session.submitted if now - stamp < MINUTE_SECONDS)
@@ -149,9 +151,9 @@ class SocialStore:
 		
 		return recent_hour < social.max_submit_per_hour
 	
-	def on_submit(self, thread_id: str, now: float, decision: WakeDecision) -> None:
+	def on_submit(self, thread_id: str, now: float, decision: WakeDecision, config: Any) -> None:
 		
-		"""提交成功后记账：清 pending、置在途、记一次提交"""
+		"""提交成功后记账：清 pending、置在途、记一次提交、续跟随计时"""
 		
 		session = self.session(thread_id)
 		session.pending = None
@@ -161,6 +163,10 @@ class SocialStore:
 		
 		if decision.reason is WakeReason.CHANCE:
 			session.chance_rolled_at = now
+		
+		self._enter_active(session, config, now)
+		if decision.reason is WakeReason.FOLLOW:
+			session.follow_until = now + config.follow.duration_minutes * 60.0
 	
 	def on_reply_finished(self, thread_id: str, ok: bool, now: float, config: Any) -> None:
 		
@@ -174,7 +180,9 @@ class SocialStore:
 		
 		session.last_reply_at = now
 		session.replied.append(now)
-		self._enter_active(session, config.social, now)
+		self._enter_active(session, config, now)
+		if config.follow.enable:
+			session.follow_until = now + config.follow.duration_minutes * 60.0
 		
 		return None
 	
@@ -196,6 +204,7 @@ class SocialStore:
 				session.state		= ChatState.DIVING
 				session.state_since	= now
 				session.active_until	= 0.0
+				session.follow_until	= 0.0
 				session.pending		= None
 				LOGGER.info(f"{thread_id} 回到潜水（{'冷场' if idle else '活跃到期'}）")
 		
@@ -214,15 +223,23 @@ class SocialStore:
 			if now - last >= idle_seconds:
 				self.sessions.pop(thread_id, None)
 	
-	def _enter_active(self, session: SessionSocial, social: Any, now: float) -> None:
+	def is_following(self, thread_id: str, config: Any, now: float) -> bool:
 		
-		"""被叫到或刚发完言都算进入聊天 到期时间在区间内随机取"""
+		"""该会话是否处于跟随中 跟随里的消息跳过缓冲默认策略
+		
+		跟随由「回复完成」或「跟随中的一次提交」开启 被叫进入 active 本身还不算
+		"""
+		
+		session = self.session(thread_id)
+		return config.follow.enable and session.state is ChatState.ACTIVE and now < session.follow_until
+	
+	def _enter_active(self, session: SessionSocial, config: Any, now: float) -> None:
+		
+		"""被叫到或刚发完言都算进入跟随 时长由 follow.duration_minutes 决定 每次提交后重算"""
 		
 		session.state		= ChatState.ACTIVE
 		session.state_since	= now
-		low		= min(social.active_min_minutes, social.active_max_minutes)
-		high	= max(social.active_min_minutes, social.active_max_minutes)
-		session.active_until = now + random.uniform(low, high) * 60.0
+		session.active_until = now + config.follow.duration_minutes * 60.0
 	
 	def _prune_stamps(self, stamps: Deque[float], now: float) -> None:
 		while stamps and now - stamps[0] > HOUR_SECONDS:

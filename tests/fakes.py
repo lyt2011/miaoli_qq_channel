@@ -39,16 +39,10 @@ def make_config(**social_overrides):
 		enabled				= True,
 		tick_seconds		= 1.0,
 		quiet				= 8.0,
-		follow_up			= False,
-		follow_quiet		= 30.0,
-		follow_min_unread	= 2,
 		chance				= 0.0,
 		chance_cooldown_seconds	= 120.0,
 		max_submit_per_minute	= 1,
 		max_submit_per_hour	= 12,
-		speak_cooldown_seconds	= 300.0,
-		active_min_minutes	= 15,
-		active_max_minutes	= 30,
 		idle_minutes		= 6,
 		in_flight_timeout_seconds	= 240.0,
 		wake				= SimpleNamespace(at=True, name=True, keyword=False, keyword_list=[], question=False, quote=False),
@@ -56,8 +50,20 @@ def make_config(**social_overrides):
 	for key, value in social_overrides.items():
 		setattr(social, key, value)
 	
+	follow = SimpleNamespace(
+		enable				= False,
+		duration_minutes	= 10,
+		min_interval_seconds= 3.0,
+		max_submit_per_minute	= 2,
+		max_submit_per_hour		= 30,
+	)
+	for key, value in social_overrides.items():
+		if key.startswith("follow_") or key == "enable_follow":
+			setattr(follow, "enable" if key == "enable_follow" else key[len("follow_"):], value)
+	
 	return SimpleNamespace(
 		account		= SimpleNamespace(bot_id="bot"),
+		follow		= follow,
 		channel		= SimpleNamespace(buf_size=2),
 		delivery	= SimpleNamespace(
 			burst_enable=True,
