@@ -115,8 +115,22 @@ def test_plain_message_never_submits_while_diving(monkeypatch):
 	assert harness.ready == []
 
 
-def test_active_state_follows_up_after_cooldown(monkeypatch):
+def test_active_state_does_not_follow_up_by_default(monkeypatch):
 	harness = Harness(monkeypatch)
+	harness.feed(FakeEvent(at_me=True), True, 100.0)
+	harness.scheduler.tick(now=109.0)
+	harness.drain()
+	harness.social.on_reply_finished("group-1", True, 120.0, harness.config)
+	
+	# 刚说完话 别人继续聊天：默认不主动接话 不跑图
+	harness.feed(FakeEvent(text="然后呢"), False, 200.0)
+	for now in (203.0, 209.0, 260.0):
+		assert harness.scheduler.tick(now=now) == 0
+	assert harness.ready == []
+
+
+def test_active_state_follows_up_when_enabled(monkeypatch):
+	harness = Harness(monkeypatch, follow_up=True)
 	harness.feed(FakeEvent(at_me=True), True, 100.0)
 	harness.scheduler.tick(now=109.0)
 	harness.drain()

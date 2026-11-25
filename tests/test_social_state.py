@@ -60,9 +60,22 @@ def test_chance_can_wake_diving_session(monkeypatch):
 	assert store.session("group-1").state is ChatState.DIVING
 
 
-def test_active_session_needs_quiet_and_speak_cooldown(monkeypatch):
+def test_active_session_does_not_follow_up_by_default(monkeypatch):
 	store = quiet_store(monkeypatch)
 	config = make_config()
+	session = store.session("group-1")
+	session.state = ChatState.ACTIVE
+	session.last_message_at = 100.0
+	session.last_reply_at = 100.0
+	
+	# 聊天中也不主动接话：普通消息不提交 只有被叫或随机概率才会开窗
+	for now in (103.0, 109.0, 161.0, 600.0):
+		assert store.decide("group-1", now, config) is None
+
+
+def test_active_session_follows_up_when_enabled(monkeypatch):
+	store = quiet_store(monkeypatch)
+	config = make_config(follow_up=True)
 	session = store.session("group-1")
 	session.state = ChatState.ACTIVE
 	session.last_message_at = 100.0

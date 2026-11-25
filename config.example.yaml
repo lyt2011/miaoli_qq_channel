@@ -16,7 +16,9 @@ message:
 social:                   # 会话社交状态机 diving / active
   enabled: true           # 关掉退回旧行为：被叫到就立刻提交，不限流不攒批
   tick_seconds: 1.0       # 调度器 tick 间隔（秒）
-  quiet: 8.0              # 静默窗口：连续这么久没有新消息才提交
+  quiet: 8.0              # 
+  follow_up: false        # 聊天中状态是否主动跟一句；默认关（关掉后只有被叫或随机概率开窗）
+静默窗口：连续这么久没有新消息才提交
   chance: 0.05            # 潜水时普通消息的随机唤醒概率
   chance_cooldown_seconds: 120.0  # 随机唤醒成功后的冷却（秒）
   max_submit_per_minute: 1        # 每个会话每分钟最多提交几次

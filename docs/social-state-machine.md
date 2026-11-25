@@ -125,7 +125,7 @@ class SessionBuffer:
 | 状态 | 含义 | 行为 |
 | --- | --- | --- |
 | `diving` | 潜水，平时状态 | 只有命中「必须回」的唤醒条件才进 active 并提交 |
-| `active` | 聊天中 | 消息只入队，安静下来后按节奏提交，受发言冷却和限流约束 |
+| `active` | 聊天中 | 消息只入队；默认不主动接话，只有被叫或摇中 `chance` 才提交（0.15.1 起 `social.follow_up` 默认关） |
 | `retreating` | 退场中（可选，默认不开） | 说一句退场话后回 diving |
 
 ### 5.2 转移表
@@ -135,7 +135,7 @@ class SessionBuffer:
 | diving | 命中 addressed（@ / 昵称 / 私聊） | active | 立即可提交（受限流） |
 | diving | 命中关键词 / 引用 / 提问 / 戳 | active | 同上（按权重排队） |
 | diving | 未命中，摇中 `chance` 且过冷却 | active | 提交一窗 |
-| active | 安静 `quiet`(8s) 且有未回消息 | active | 提交一窗（受 60s 发言冷却 + 限流） |
+| active | 安静 `quiet`(8s) 且有未回消息（仅 `social.follow_up: true`） | active | 提交一窗（受 60s 发言冷却 + 限流） |
 | active | 活跃超过 `active_max_minutes`(随机 15~30) | retreating / diving | 可选取场话，否则直接回 diving |
 | active | 冷场 `idle_minutes`(6) | active | 默认**不**试探（配置可开：25% 概率试探一句） |
 | 任意 | 被 @ / 被叫名字 | active | 重置活跃计时 |
@@ -146,7 +146,7 @@ class SessionBuffer:
 2. **说完话 `speak_cooldown`(60s) 内不提交**：防止连珠炮。
 3. **每条窗口提交后，至少等 `quiet`(8s) 再评估下一次**。
 4. **所有提交都要过限流**（见 6.3），超限就攒着，不丢消息。
-5. **跟随不再按消息计数**：`followup_minutes` / `followup_messages` 两个配置项删除，由 active 超时 + 冷却 + 限流取代。
+5. **跟随不再按消息计数**：`followup_minutes` / `followup_messages` 两个配置项删除；聊天中默认不跟话，确认要跟再打开 `social.follow_up`（仍受静默、冷却、限流约束）。
 
 ### 5.4 状态持久化
 
@@ -339,5 +339,11 @@ submit:
 | 私聊豁免「限流」 | 只豁免提交限流（`social.max_submit_*`、发言冷却）；发送频率 `delivery.max_send_*` 仍生效 | 私聊不该被攒批，但仍要防止刷屏 |
 | active 只在发言后进入 | 被叫唤醒命中时也进入 active | 被叫之后的连续对话不该重新从潜水开始；否则接一句就断，观感很差 |
 | 水位在 Delivery 里推进 | 在 `QQChannel.finish_reply()` 里推进（与 `SocialStore.on_reply_finished` 同一处） | 发送与状态收尾本来就在同一个 finally 里，拆开反而要跨层传状态 |
+
+### 16.1 0.15.1 修正
+
+| 设计稿 | 实际 | 原因 |
+| --- | --- | --- |
+| active 安静后自动跟一句 | 默认关闭，`social.follow_up: true` 才生效 | 实测聊天中每段自然停顿都会开一窗，观感仍是「一条消息一次」；关掉后普通消息除随机概率外不再触发，回归「被叫 / 随机才开窗」 |
 
 其它确认一致的点：Buffer 上限只丢最旧的未寻址消息、水位只前进、发送成功才推进水位、提交四道闸（静默 / 不在途 / 发言冷却 / 提交频率）、每秒 tick 的单调度任务、`ready` 每会话一条且满了下一 tick 再试。

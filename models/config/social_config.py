@@ -23,6 +23,7 @@ class SocialConfig(BaseModel):
 	enabled		: bool	= Field(default=True, description="是否启用状态机；关闭后退回「被叫即提交」的旧行为")
 	tick_seconds: float	= Field(default=1.0, description="调度器 tick 间隔（秒）", gt=0, le=10)
 	quiet		: float	= Field(default=8.0, description="静默窗口（秒）连续这么久没有新消息才提交", ge=0, le=120)
+	follow_up	: bool	= Field(default=False, description="聊天中状态下普通消息安静后是否自动跟一句；默认关，关掉后只有被叫或随机概率才开窗")
 	
 	chance		: float	= Field(default=0.05, description="潜水时普通消息的随机唤醒概率", ge=0, le=1)
 	chance_cooldown_seconds	: float	= Field(default=120.0, description="随机唤醒成功后的冷却（秒）", ge=0)

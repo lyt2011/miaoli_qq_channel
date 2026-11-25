@@ -39,6 +39,7 @@ def make_config(**social_overrides):
 		enabled				= True,
 		tick_seconds		= 1.0,
 		quiet				= 8.0,
+		follow_up			= False,
 		chance				= 0.0,
 		chance_cooldown_seconds	= 120.0,
 		max_submit_per_minute	= 1,

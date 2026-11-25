@@ -113,10 +113,10 @@ class SocialStore:
 		if session.pending is not None:
 			return session.pending
 		
-		if session.state is not ChatState.ACTIVE:
+		social = config.social
+		if session.state is not ChatState.ACTIVE or not social.follow_up:
 			return None
 		
-		social = config.social
 		if now - session.last_message_at < social.quiet:
 			return None
 		

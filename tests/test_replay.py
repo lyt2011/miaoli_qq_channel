@@ -93,14 +93,28 @@ def test_burst_of_plain_chat_does_not_run_once_per_message(monkeypatch):
 	assert replay.buffers.count("group-1") == 20
 
 
-def test_addressed_wake_then_followup_is_rate_limited(monkeypatch):
+def test_addressed_wake_then_plain_chat_does_not_reopen(monkeypatch):
 	replay = Replay(monkeypatch)
 	
 	replay.say("喵璃在吗", addressed=True, at_me=True)
 	replay.run(10.0)
 	assert replay.submits == [8.0]
 	
-	# 之后 4 分钟内一直有人聊天：每分钟最多一次 冷却 60 秒
+	# 之后 4 分钟一直有人聊天：默认不跟话 一条都不该再开窗
+	for index in range(24):
+		replay.say(f"接着聊 {index}", addressed=False)
+		replay.run(10.0)
+	
+	assert replay.submits == [8.0]
+
+
+def test_follow_up_when_enabled_is_rate_limited(monkeypatch):
+	replay = Replay(monkeypatch, follow_up=True)
+	
+	replay.say("喵璃在吗", addressed=True, at_me=True)
+	replay.run(10.0)
+	assert replay.submits == [8.0]
+	
 	for index in range(24):
 		replay.say(f"接着聊 {index}", addressed=False)
 		replay.run(10.0)
