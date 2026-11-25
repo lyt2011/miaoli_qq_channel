@@ -14,7 +14,7 @@ from .qq_channel_message	import (
 	split_thread_id,
 )
 
-from typing	import FrozenSet, List, Literal, Union
+from typing	import Dict, FrozenSet, List, Literal, Union
 
 import base64
 import random
@@ -34,6 +34,12 @@ FULL_STOP	= "。"
 class QQChannel(BaseChannel):
 	
 	"""把 QQ 事件环形缓冲暴露成 miaoli_bot 的消息通道"""
+	
+	def __init__(self) -> None:
+		super().__init__()
+		
+		# thread_id -> 这一窗里有没有冲我来的消息 回复时用来决定要不要续跟随
+		self.addressed_windows: Dict[str, bool] = {}
 	
 	@property
 	def name(self) -> str:
@@ -57,6 +63,9 @@ class QQChannel(BaseChannel):
 		# 原地复制再清空 保住 store 里那个列表的引用
 		messages = list(ready)
 		ready.clear()
+		
+		for message in messages:
+			self.addressed_windows[message.thread_id] = message.addressed
 		
 		return messages
 	
@@ -106,9 +115,11 @@ class QQChannel(BaseChannel):
 			for piece in pieces:
 				sent = await self.send_text(mode, chat_id, piece, config) or sent
 		
+		# 只有「这轮是被叫到才回」的窗口才续跟随窗口
+		# 跟随窗口里每条普通消息都算一次触发 回复要是也续上 跟随就永远关不掉
 		if mode == "group" and sent:
 			backlog = store_recall(MESSAGE_BUFFER, default=None)
-			if backlog is not None:
+			if backlog is not None and self.addressed_windows.pop(thread_id, True):
 				backlog.open_followup(thread_id, config.submit.followup_minutes, config.submit.followup_messages)
 		return None
 	

@@ -97,9 +97,10 @@ class QQChannelMessage(BaseChannelMessage):
 	
 	"""QQ 事件的最小包装 一个实例 = 一个会话的一回合"""
 	
-	def __init__(self, events: List[MessageEvent], omitted: int = 0) -> None:
+	def __init__(self, events: List[MessageEvent], omitted: int = 0, addressed: bool = True) -> None:
 		self.events = events
 		self.omitted = omitted
+		self.addressed = addressed
 	
 	@property
 	def thread_id(self) -> str:

@@ -61,6 +61,17 @@ def test_recent_window_reports_omissions_and_keeps_at_least_trigger():
 	assert backlog.pop_window("g", limit=0) == (["trigger"], 0)
 
 
+def test_has_addressed_reports_pending_trigger():
+	backlog = ThreadBacklog(cap=10)
+	backlog.record("g", "ordinary", False)
+	assert not backlog.has_addressed("g")
+	backlog.record("g", "trigger", True)
+	assert backlog.has_addressed("g")
+	backlog.pop_window("g")
+	assert not backlog.has_addressed("g")
+	assert not backlog.has_addressed("unknown")
+
+
 def test_recent_window_keeps_latest_addressed_message():
 	backlog = ThreadBacklog(cap=10)
 	backlog.record("g", "addressed", True)

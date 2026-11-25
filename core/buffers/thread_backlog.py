@@ -112,6 +112,14 @@ class ThreadBacklog:
 		
 		return len(bucket) if bucket else 0
 	
+	def has_addressed(self, thread_id: str) -> bool:
+		
+		"""这个会话的积压里有没有「冲我来的」事件"""
+		
+		bucket = self.data.get(thread_id)
+		
+		return any(addressed for _, addressed in bucket) if bucket else False
+	
 	def ready_threads(self) -> List[str]:
 		
 		"""所有该开一次窗的会话 按「第一次收到消息」的先后排列"""

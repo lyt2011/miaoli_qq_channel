@@ -248,6 +248,8 @@ class MiaoLiQQChannel(NcatBotPlugin):
 		if any(message.thread_id == thread_id for message in ready):
 			return False
 		
+		addressed = backlog.has_addressed(thread_id)
+		
 		window = backlog.pop_window(thread_id, limit=config.submit.recent_chat_limit)
 		if not window:
 			return True
@@ -255,7 +257,7 @@ class MiaoLiQQChannel(NcatBotPlugin):
 		if not events:
 			return True
 		
-		ready.append(QQChannelMessage(events, omitted=omitted))
+		ready.append(QQChannelMessage(events, omitted=omitted, addressed=addressed))
 		please_run_graph()
 		
 		return True

@@ -20,8 +20,8 @@ submit:
   group_whitelist: []     # 群白名单；空列表拒绝所有群
   at_only_in_group: false # true 时仅 @ 触发，不做昵称/概率唤醒；跟随仍有效
   nickname_variants: []   # 额外唤醒昵称，account.bot_nickname 始终生效
-  followup_minutes: 5     # 成功群回复后的跟随窗口时长；0关闭
-  followup_messages: 8    # 每窗口普通群消息数量上限；0关闭
+  followup_minutes: 5     # 成功群回复后的跟随窗口时长；0关闭。只有「被叫到才回」的回复才续窗，跟随里的回复不续
+  followup_messages: 8    # 每窗口普通群消息数量上限；0关闭。窗口内每条普通消息都能单独触发一轮跟随
   recent_chat_limit: 8    # 每轮最多附带的最近消息数，触发消息始终保留
   max_reply_chars: 500    # 自动群回复字符上限；超限整条不发送
 
