@@ -1,0 +1,6 @@
+name = "persona_ops"
+entry_class = "main.PersonaOps"
+description = "按场景给模型一条可选的拟人表达提示（概率 + 冷却，不强制）"
+[[dependences]]
+name = "human_injector"
+version = "0.59.0"

@@ -1,0 +1,15 @@
+# persona_ops 配置模板
+#
+# 用法：
+#   cp plugins/persona_ops/config.example.yaml plugins/persona_ops/config.yaml
+#
+# config.yaml 已加入 .gitignore，不会被提交。本文件是入库的模板。
+
+enable: false            # 是否启用；关着就完全不挂节点
+probability: 0.6         # 命中场景后再按这个概率决定这轮要不要注入
+cooldown_turns: 3        # 同一会话连续注入之间的冷却轮数
+kinds:                   # 允许的提示类别 默认只开两类
+  - tease                # 对方在调侃 → 建议顺杆补刺
+  - self_deprecate       # 对方在自嘲 → 建议先接情绪
+  # - restraint          # 正经 / 情绪低落 → 建议收刺（实测偏冗余）
+  # - affection          # 对方主动亲近 → 建议接住（实测会把人设推偏）
