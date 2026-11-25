@@ -3,10 +3,15 @@ from .config		import (
 	AccountConfig,
 	ChannelConfig,
 	CorpusConfig,
+	DeliveryConfig,
 	MessageConfig,
-	SplitConfig,
+	SnapshotConfig,
+	SocialConfig,
 	SubmitConfig,
+	SplitConfig,
 	TypingConfig,
+	VoiceConfig,
+	WakeConfig,
 )
 
 
@@ -16,10 +21,15 @@ __all__ = [
 	"AccountConfig",
 	"ChannelConfig",
 	"CorpusConfig",
+	"DeliveryConfig",
 	"MessageConfig",
-	"SplitConfig",
+	"SnapshotConfig",
+	"SocialConfig",
 	"SubmitConfig",
+	"SplitConfig",
 	"TypingConfig",
+	"VoiceConfig",
+	"WakeConfig",
 
 	# plugin_config
 	"PluginConfig",

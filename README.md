@@ -4,7 +4,7 @@
 
 把 QQ 事件缓冲成**消息通道**，供 [`miaoli_bot`](https://github.com/lyt2011/miaoli_bot) 读取。
 
-- **版本**：0.13.0
+- **版本**：0.15.0
 - **入口**：`main.py`（插件类 `MiaoLiQQChannel`）
 - **运行载体**：Ncatbot 插件系统（NapCat / OneBot 11）
 - **依赖**：`miaoli_bot >= 0.59.0`（`meme_ops` 依赖其 `human_injector` 子插件 —— 主包 0.59.0 起注入表按会话分层，`inject_human` 需要传 `thread_id`，0.58.x 上跑会 `TypeError`；`BaseChannel.platforms` 与 `reply(platform, thread_id, content)` 是 0.44.0 才有的，`to_text()` 在 0.44.0 已被删除）；必需依赖 `markdown` 与 `beautifulsoup4`（`reply` 剥 markdown 用）；可选依赖 `httpx`（只有开了 `voice.enable` 才需要）
@@ -25,41 +25,46 @@ miaoli_bot         →  miaoli_qq_channel     ❌
 ```
 ncatbot 事件
   ↓  @registrar.on_message()  backlog_anything     同步、O(1)、零 await
-ThreadBacklog（每会话一条队列，入区时顺手打好「是不是冲我来的」标）
-  ├─ 冲我来的 → watch_thread(thread_id)             每个会话一个观察任务（debounce）
-  │    先睡 submit.quiet 秒 → 积压条数变了就重新计时
-  │    → 没变就尝试提交：就绪区满 / 已在排队 → 不提交、任务继续等
-  │    → 搬进就绪区（整个会话打包成一条 QQChannelMessage）→ 任务退出
-  └─ 没人叫我 → 摇骰子（submit.chance）              命中就立刻交，不等补充
-       冷却期内（submit.cooldown）连摇都不摇
-       就绪区非空 → 让位给别人，且不占冷却
+MessageBufferStore（每会话一条未读队列，入区时顺手打好「是不是冲我来的」标）
+  ↓  只记录：推进队列、时间戳，不做任何判定与 await
+SocialStore（每会话一个状态机：diving 潜水 / active 聊天中）
+  ├─ 潜水：命中唤醒条件（@ / 昵称 / 关键词 / 提问 / 引用）→ 记成 pending
+  │        没命中就按 social.chance 摇随机（chance_cooldown_seconds 内不重复摇）
+  └─ 聊天中：消息只入队，安静 quiet 秒后才评估要不要跟一句
+  ↓  Scheduler（单 asyncio 任务，每秒 tick）
+  每个 tick：状态超时检查 → 静默检查 → 提交频率上限 → decide → 提交
+  ↓  提交成功：整段未读取走、包成一条 QQChannelMessage、记在途
 READY_BUFFER（就绪区，每会话一条）
   ↓  QQChannel.drain()                             一次取空、原地 clear
-QQChannelMessage（thread_id / platform / to_content）
-  ↓  to_content() 把事件渲染成 markdown 文本（见下节）
+QQChannelMessage（未读快照 / 唤醒理由 / 已读水位）
+  ↓  to_content() 渲染成带时间戳的 markdown 快照
   ↓  主包 tick + 通道的 please_run_graph() 唤醒
 GraphState.messages（一条 HumanMessage = to_content()）
   ↓  跑完把末条 AIMessage 交回来
-QQChannel.reply(platform, thread_id, content)      剥 markdown → 按空行切条 → 逐条发回 QQ
+QQChannel.reply(platform, thread_id, content)      剥 markdown → 按空行切条 → 节流 → 逐条发
+  ↓  发送结束回报 SocialStore：推进水位 / 记发言时间 / 清在途标记
 ```
 
-两级缓冲的分工：
+三级结构的职责：
 
-| 缓冲 | 放什么 | 上限 | 满了怎么办 |
-|---|---|---|---|
-| `MESSAGE_BUFFER`（积压） | 授权通过的事件，按会话分队列 | `message.buf_size` | 优先丢最旧的未寻址消息并打日志 |
-| `READY_BUFFER`（就绪） | 已经该开一次窗的会话，每会话一条 | `channel.buf_size` | 观察任务不提交，继续等主包取走 |
+| 层 | 放什么 | 关键约束 |
+|---|---|---|
+| `MessageBufferStore`（积压） | 授权通过的事件，按会话分队列 + 已读水位 | `message.buf_size` 上限，超了只丢最旧的「没叫我」的消息 |
+| `SocialStore`（社交状态） | diving / active、pending 唤醒、提交与发言时间戳、在途标记 | 只在进程内，重启清空；限流按会话算 |
+| `READY_BUFFER`（就绪） | 已经该开窗的会话，每会话一条 | `channel.buf_size` 上限，满了调度器下一 tick 再试 |
 
-**只有提交成功，观察任务才退出。** 这是刻意的：任务一旦提前放开而消息还躺在积压区，就再没有任何东西会来开窗 —— 表现就是「说了一堆发现根本没理你」。就绪区满了就一直等下去，主包取走一个它就补一个。
+**为什么不再「一条消息一次跑图」**：普通消息只进队列与状态判定，绝不直接提交；提交必须同时满足「静默 `quiet`」「不在途」「过 `speak_cooldown_seconds`」「过每分钟/每小时上限」。`active` 聊天状态里能再跟几句，但有同样的四道闸，最多 1 次/分钟、12 次/小时。
 
 ## 目录结构
 
 ```
 miaoli_qq_channel/
 ├── manifest.toml
-├── main.py                    # MiaoLiQQChannel：建积压/就绪区、记事件、管每会话观察任务
+├── main.py                    # MiaoLiQQChannel：建积压/社交状态/就绪区、记事件、起停调度器
 ├── config.example.yaml
 ├── README.md
+├── docs/
+│   └── social-state-machine.md  # 会话驱动重构设计稿（0.15.0 落地）
 ├── CHANGELOG.md
 ├── CHANGELOG/
 ├── api/
@@ -70,12 +75,19 @@ miaoli_qq_channel/
 │   └── store_keys.py          # 共享容器键
 ├── core/
 │   ├── buffers/
-│   │   └── thread_backlog.py  # ThreadBacklog：每会话一条 deque
+│   │   └── message_queue.py   # MessageBufferStore / ThreadQueue / MessageEntry：未读队列与水位
 │   ├── channel/
-│   │   ├── qq_channel.py      # QQChannel(BaseChannel)：name / platforms / drain / reply
-│   │   ├── qq_channel_message.py  # QQChannelMessage / WakeMessage / is_addressed / thread_id 编制
+│   │   ├── qq_channel.py      # QQChannel(BaseChannel)：name / platforms / drain / reply / 节流
+│   │   ├── qq_channel_message.py  # QQChannelMessage / WakeMessage / 快照渲染 / thread_id 编制
 │   │   ├── render_event.py    # render_event(event)：元信息行 + 每段一行
 │   │   └── render_segment.py  # render_segment(segment)：单个消息段 → 一行
+│   ├── delivery/
+│   │   ├── snapshot.py        # 快照头 / 时间前缀 / 旧消息警告 / 字数预算裁剪
+│   │   └── throttle.py        # SendGate（发送频率账本）/ burst_gap（分条停顿）
+│   ├── social/
+│   │   ├── policy.py          # WakeReason / classify：这条消息像不像在叫我
+│   │   ├── scheduler.py       # Scheduler：每秒 tick，判定与提交
+│   │   └── state.py           # ChatState / SessionSocial / SocialStore：状态机与限流账本
 │   ├── corpus_writer.py       # CorpusWriter / to_record：消息事件 → 一行 JSONL
 │   ├── markdown/
 │   │   └── strip_markdown.py  # strip_markdown(text)：markdown → 正文，换行结构原样保留
@@ -87,11 +99,15 @@ miaoli_qq_channel/
 │   └── config/
 │       ├── channel_config.py  # ChannelConfig
 │       ├── corpus.py          # CorpusConfig（语料录制）
+│       ├── delivery_config.py # DeliveryConfig（发送节流）
 │       ├── message.py         # MessageConfig
-│       ├── submit.py          # SubmitConfig
+│       ├── snapshot_config.py # SnapshotConfig（未读快照）
+│       ├── social_config.py   # SocialConfig / WakeConfig（状态机与唤醒条件）
+│       ├── submit.py          # SubmitConfig（白名单与回复上限）
 │       ├── split_config.py    # SplitConfig
 │       ├── typing_config.py   # TypingConfig
 │       └── voice_config.py    # VoiceConfig（语音发送）
+├── tests/                     # 单元 + 回放测试（不依赖 ncatbot，纯逻辑模块直接加载）
 ├── utils/
 │   └── easier_send.py         # easier_send(mode, chat_id, ob11_message)：群 / 私聊发送
 └── plugins/                   # 挂在通道下的子插件
@@ -114,20 +130,51 @@ account:                # 账号信息 四项全必填
   admin_nickname: "乃依⁧~喵⁧"  # 管理员名称
 
 channel:
-  buf_size: 2           # 就绪区上限（条），满了本轮不再开新窗
-message:
-  buf_size: 30          # 每个会话的积压上限（条），超了只丢最旧的「没叫我」的消息
+  buf_size: 2           # 就绪区上限（条），满了调度器下一 tick 再交
 
-submit:
-  quiet: 8.0            # 寻址或跟随窗口消息静默后提交
-  chance: 0.05          # 未寻址群消息的随机触发概率
-  cooldown: 120.0       # 群随机触发冷却（秒）
+message:
+  buf_size: 30          # 每个会话的未读上限（条），超了只丢最旧的「没叫我」的消息
+
+social:                 # 会话状态机
+  enabled: true         # 关掉退回旧行为：被叫到就立刻提交，不限流不攒批
+  tick_seconds: 1.0     # 调度器 tick 间隔（秒）
+  quiet: 8.0            # 静默窗口：连续这么久没有新消息才提交
+  chance: 0.05          # 潜水时普通消息的随机唤醒概率
+  chance_cooldown_seconds: 120.0  # 随机唤醒成功后的冷却（秒）
+  max_submit_per_minute: 1        # 每个会话每分钟最多提交几次
+  max_submit_per_hour: 12         # 每个会话每小时最多提交几次
+  speak_cooldown_seconds: 60.0    # 距上次成功发言的冷却（秒）
+  active_min_minutes: 15          # 聊天状态最短持续（分钟）
+  active_max_minutes: 30          # 聊天状态最长持续（分钟）
+  idle_minutes: 6                 # 聊天状态下多久没人说话就回潜水（分钟）
+  in_flight_timeout_seconds: 240  # 在途窗口超时（秒）
+  wake:                 # 唤醒条件：@ 与昵称默认开，其余按需
+    at: true
+    name: true
+    keyword: false
+    keyword_list: []
+    question: false
+    quote: false
+
+snapshot:               # 交给模型的未读快照
+  unread_limit: 30      # 一次最多带多少条未读
+  max_chars: 6000       # 快照正文总字数上限，超了从最旧的开始省
+  old_message_minutes: 30  # 最新一条超过这么久就提醒「这是旧账」
+
+delivery:               # 发送节流
+  burst_enable: true
+  burst_interval_min: 1.0
+  burst_interval_max: 3.0
+  long_gap_probability: 0.1
+  long_gap_min: 2.5
+  long_gap_max: 5.0
+  max_send_per_minute: 8
+  max_send_per_hour: 60
+
+submit:                 # 入口白名单与回复上限
   group_whitelist: []   # 群白名单；为空拒绝所有群
   at_only_in_group: false
   nickname_variants: []
-  followup_minutes: 5
-  followup_messages: 8
-  recent_chat_limit: 8
   max_reply_chars: 500
 
 split:                  # 输出分割 按空行切成几条就发几条
@@ -135,32 +182,49 @@ split:                  # 输出分割 按空行切成几条就发几条
 
 typing:                 # 打字延迟 base_speed=0 等价于关
   enable: true
-  base_speed: 0.06      # 每个字的打字时间（秒）
-  speed_offset: 0.02    # 每字速度偏移（须 < base_speed，否则每字时间可为负）
+  base_speed: 0.06
+  speed_offset: 0.02
 
 voice:                  # 可选 按概率把整条回复换成一条语音
-  enable: false         # 开了才会发语音
-  probability: 0.3      # 每次回复掷一次骰子 命中就整条语音
-  mimo_url: "https://api.xiaomimimo.com/v1/chat/completions"   # MiMo 语音合成接口
-  mimo_key: ""          # MiMo 的 API Key 填在 config.yaml 里 不要进仓库
-  model: "mimo-v2.5-tts"   # 语音合成模型
-  voice: "冰糖"          # 预置音色 ID
-  style: ""             # 语气指令 放在 user 角色 留空只传朗读文本
-  min_chars: 10         # 说出来的字数不到这么多不发语音
-  max_chars: 30         # 说出来的字数超过这么多不发语音
+  enable: false
+  probability: 0.3
+  mimo_url: "https://api.xiaomimimo.com/v1/chat/completions"
+  mimo_key: ""
+  model: "mimo-v2.5-tts"
+  voice: "冰糖"
+  style: ""
+  min_chars: 10
+  max_chars: 30
 
 corpus:                 # 可选 语料录制 默认关
-  enable: false         # 开了才写文件
-  path: null            # 留空写 data/corpus.jsonl
-  encoding: "utf-8"     # 写文件用的编码
-  flush: true           # 每条写完立刻刷盘 不刷最多丢最后一条
+  enable: false
+  path: null
+  encoding: "utf-8"
+  flush: true
 ```
+
+> 旧配置里的 `submit.quiet` / `submit.chance` / `submit.cooldown` / `submit.followup_*` / `submit.recent_chat_limit`
+> 在 0.15.0 已迁移或删除：`quiet` / `chance` / `cooldown` 移到 `social.*`，跟随窗口整体删除，
+> `recent_chat_limit` 由 `snapshot.unread_limit` / `snapshot.max_chars` 取代。旧字段会被 pydantic 忽略。
 
 ## 群聊唤醒与上下文
 
-群白名单为空时 fail-closed；私聊不设用户白名单，但机器人自己的回声会忽略。白名单外群消息和机器人回声不会进入积压区或可选语料。群聊支持 @、配置昵称和概率触发；`at_only_in_group` 可关闭昵称与随机触发。成功发出自动群回复后，开启仅存于进程内的有限时长、有限消息数跟随窗口；窗口内每条普通群消息都能单独触发一轮跟随，但这些跟随回复**不会**再续窗（只有被 @ / 被叫名字那一轮的回复会续），所以一次被叫最多连带跟随 `followup_messages` 条就停，不会自激。触发时最多提交最近 `recent_chat_limit` 条，较早省略数量会注明，且始终保留触发消息。自动群回复超过 `max_reply_chars` 时整条不发送，私聊不受此限制。
+群白名单为空时 fail-closed；私聊不设用户白名单，但机器人自己的回声会忽略。白名单外群消息和机器人回声不会进入积压区或可选语料。
 
-群聊语气提示是普通消息正文，不是主包 system prompt。渠道无法阻止主包运行本轮 LLM，也无法控制绕过自动 `reply()` 的主动发送工具。重启后跟随状态清空。
+唤醒分两层：
+
+1. **事实层**：`is_addressed`（@ / 昵称 / 私聊）始终生效；`at_only_in_group: true` 时只认 @，昵称与关键词/随机都不唤醒。
+2. **附加层**（`social.wake`）：关键词族 `keyword`、提问句 `question`、引用消息 `quote`，默认只开 @ 与昵称。
+
+命中任何一条只是**记成 pending**，不会立刻跑图：还要等 `social.quiet` 秒静默、不在途、过发言冷却、并且通过每分钟/每小时提交上限。
+
+- **潜水（diving）**：没命中唤醒条件时按 `social.chance` 摇随机；`chance_cooldown_seconds` 内不重复摇。私聊不摇，永远按被叫处理。
+- **聊天中（active）**：成功发言或命中唤醒后进入，持续 `active_min_minutes`~`active_max_minutes`（随机）。期间消息只入队，安静 `quiet` 秒且过了 `speak_cooldown_seconds` 才可能再跟一句，同样受限流；冷场 `idle_minutes` 或到期后回潜水。`active` 是「跟随」的新形态；旧的 `followup_minutes` / `followup_messages` 已删除。
+- **快照**：最多带 `snapshot.unread_limit` 条未读，按 `snapshot.max_chars` 预算从最旧的开始省略（省略条数写在正文里）；每条带 `[HH:MM:SS · 多久以前]` 前缀；最新一条超过 `old_message_minutes` 会附「这是旧账」提醒；头部有唤醒理由、未读条数、已读水位与「你看到的不是全部」。
+- **水位**：`reply` 发送成功后才把该会话的已读水位推进到本窗最后一条；发送失败不推进。
+- 自动群回复超过 `max_reply_chars` 时整条不发送，私聊不受此限制。
+
+群聊语气提示是普通消息正文，不是主包 system prompt。渠道无法阻止主包运行本轮 LLM，也无法控制绕过自动 `reply()` 的主动发送工具。重启后社交状态与水位清空（回到潜水）。
 
 ## 寻址判断
 
@@ -174,7 +238,7 @@ corpus:                 # 可选 语料录制 默认关
 
 外加一条前置：**自己发的消息一律不算** —— 否则机器人自己的发言会被当成「被叫名字」，直接自激。
 
-`is_addressed` 返回 `False` 的含义是「**看不出证据**」，不是「确定不是冲我来的」。授权消息仍会先进入积压区；之后由跟随窗口、`at_only_in_group`、随机概率和冷却决定是否提交。主包仍会处理已提交的消息，因此通道无法做到“不运行 LLM 的纯记录”。
+`is_addressed` 返回 `False` 的含义是「**看不出证据**」，不是「确定不是冲我来的」。授权消息仍会先进入积压区；之后由 `SocialStore`（状态机）、`social.wake` 附加条件、`at_only_in_group`、随机概率与限流共同决定是否提交。主包仍会处理已提交的消息，因此通道无法做到“不运行 LLM 的纯记录”。
 
 ## 主动唤醒
 
@@ -215,6 +279,15 @@ await easier_send("group", 977469324, [{"type": "text", "data": {"text": "在的
 - `ob11_message` 是**消息段数组**（不是字符串）。`record` 段的 `file` 记得带 `file://` 前缀，NapCat 会自己转 SILK。
 - `ncatbot_api` 是给测试用的可替换入口，正常调用不用传 —— 不传就取主包放进共享容器的那个（`miaoli_bot.api.get_ncatbot_api()`）。
 - 本函数原先住在 `miaoli_bot.utils`，0.7.0 迁到这里：QQ 的发送细节归通道，主包不认识 QQ。
+
+### 发送节流
+
+`reply` 逐条发送时受 `delivery.*` 约束：
+
+- **分条停顿**：相邻两条之间随机停 `burst_interval_min`~`burst_interval_max` 秒；`long_gap_probability` 概率换成 `long_gap_min`~`long_gap_max` 的长停顿。`burst_enable: false` 时不停顿。
+- **频率账本**：每个会话一个 `SendGate`，每分钟最多 `max_send_per_minute` 条、每小时 `max_send_per_hour` 条；超了本轮剩下的不发并记一条 warning（不重试、不排队）。
+- 语音与文字都算一条，共用同一本账。
+- 私聊同样受发送上限约束；提交限流（`social.max_submit_*`）对私聊豁免。
 
 ## 语音（可选）
 
@@ -284,7 +357,8 @@ sub_plugin:
 ```
 miaoli_qq_channel/models.plugin_config      PluginConfig
 miaoli_qq_channel/raw_config                原始 config（dict）
-miaoli_qq_channel/core.thread_backlog       ThreadBacklog（积压）
+miaoli_qq_channel/core.message_buffer       MessageBufferStore（未读队列 + 已读水位）
+miaoli_qq_channel/core.social_store         SocialStore（状态机与限流账本）
 miaoli_qq_channel/core.ready_buffer         就绪区（list）
 ```
 
@@ -292,7 +366,7 @@ miaoli_qq_channel/core.ready_buffer         就绪区（list）
 
 ## 消息渲染格式
 
-`to_content()` 把一次开窗的全部事件渲染成 markdown 文本，**不再是 JSON**。每个事件两行起步：一行元信息，然后每个消息段一行。
+`to_content()` 把一次开窗的未读事件渲染成快照文本，**不再是 JSON**。最前面是快照头（唤醒理由 / 未读条数 / 已读水位），然后每个事件两行起步：一行元信息，然后每个消息段一行，行首带 `[HH:MM:SS · 多久以前]` 前缀。
 
 群消息：
 
@@ -334,8 +408,11 @@ miaoli_qq_channel/core.ready_buffer         就绪区（list）
 - **缓冲不过滤任何事件**：灰条（`grayTipElement`）在 NapCat 侧不在 11 种可转消息段里，会变成 `message: []` 的空段事件，但 `post_type` 照常是 `message` —— 这类事件现在也会被记进积压区。要过滤得在 `backlog_anything` 里加判断，现在没加。
 - **`enable` 配置项没有生效**：`PluginConfig` 里有这个字段，但 `on_load` 和 `backlog_anything` 都没读它，改成 `false` 依然会记录事件。要真关掉只能把插件从 `plugin_whitelist` 里摘掉。
 - **`reply` 遇到非 `text` 块直接炸**：多模态回复（图片 / 语音 / 文件）不支持，`content_to_text` 会 `raise NotImplementedError`，整条回复失败。是有意显式失败，不是静默截断。
-- **`quiet` 只对寻址消息生效**：群里每 7 秒就有人说话的话，被 @ 之后观察任务会一直重新计时、永不提交。没人 @ 的消息走的是随机开窗那条路，不受这个影响。
-- **随机开窗的速率被跑图吞吐卡死**：单次跑图约 45 秒且串行，所以实际开窗上限约 80 次/小时（`ready` 满就拒）。热闹群里大量掷中的骰子会被丢弃，丢弃不影响正确性。
+- **社交状态只在进程内**：`SocialStore` 与已读水位都不落盘，重启后回到潜水、水位清零。重启期间的消息不受影响（下次开窗会整段带上）。
+- **快照只带未读**：已读上下文不再由渠道补，靠主包 checkpoint 里已有的对话历史；渠道只负责“这一窗发生了什么”。所以不要把渠道当成唯一的上下文来源。
+- **`social.enabled: false` 是退化路径**：被叫到就立刻提交、没有静默攒批、没有提交限流与发言冷却，行为接近 0.14 的旧逻辑，只建议排障时临时开。
+- **poke 唤醒还没接**：ncatbot 的戳一戳是 notice 事件而不是消息段，当前注册器只挂了 `on_message`，所以 `PokeNotifyEventData` 不会唤醒会话；要做得先接 `on_notice`。
+- **随机开窗的速率被跑图吞吐卡死**：单次跑图约 45 秒且串行，所以实际开窗上限约 80 次/小时（`ready` 满就调度器下一 tick 再试）。热闹群里大量掷中的骰子会被丢弃，丢弃不影响正确性。
 - **同名会话已在排队时不合并**：新消息留在积压区，等那个窗口被主包取走之后才开下一个窗。所以对话密集时一个会话会被切成多个窗口。
 - **语料只记渲染后的文本**：`to_record` 用的是 `render_event()` 的输出，图片只剩一个 URL、转发只剩条数，原始 ob11 结构不进语料。要训练格式数据得先改这里。
 - **`meme_ops` 的 `help_doc.path` 是绝对路径**：本机示例写的是 `/sdcard/Ncatbot_QQ/plugins/miaoli_qq_channel/plugins/meme_ops/data/meme_helper.md`，换到服务器（`/root/Ncatbot_QQ/...`）必须跟着改；改错不报错，只是帮助文档不注入。`config.example.yaml` 用的是 `$workspace/data/meme_helper.md`，照模板复制就不会踩。

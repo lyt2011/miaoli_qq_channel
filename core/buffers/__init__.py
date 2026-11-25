@@ -1,8 +1,11 @@
-from .thread_backlog	import ThreadBacklog
+from .message_queue	import MessageBufferStore, MessageEntry, ThreadQueue
 
 
 __all__ = [
 
-	"ThreadBacklog",
+	# message_queue
+	"MessageBufferStore",
+	"MessageEntry",
+	"ThreadQueue",
 
 ]

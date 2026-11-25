@@ -8,21 +8,51 @@ account:                  # 账号信息 四项全必填
   admin_nickname: "主人"    # 管理员名称
 
 channel:
-  buf_size: 2             # 就绪区上限（条） 满了观察任务会一直等
+  buf_size: 2             # 就绪区上限（条） 满了调度器等下一 tick 再交
 
 message:
-  buf_size: 30            # 每个会话的积压上限（条） 超了只丢最旧的「没叫我」的消息
+  buf_size: 30            # 每个会话的未读上限（条） 超了只丢最旧的「没叫我」的消息
 
-submit:
-  quiet: 8.0              # 寻址或跟随窗口内的消息静默这么久后提交
-  chance: 0.05            # 未寻址群消息的随机触发概率
-  cooldown: 120.0         # 群随机触发冷却（秒）从成功开窗算起
+social:                   # 会话社交状态机 diving / active
+  enabled: true           # 关掉退回旧行为：被叫到就立刻提交，不限流不攒批
+  tick_seconds: 1.0       # 调度器 tick 间隔（秒）
+  quiet: 8.0              # 静默窗口：连续这么久没有新消息才提交
+  chance: 0.05            # 潜水时普通消息的随机唤醒概率
+  chance_cooldown_seconds: 120.0  # 随机唤醒成功后的冷却（秒）
+  max_submit_per_minute: 1        # 每个会话每分钟最多提交几次
+  max_submit_per_hour: 12         # 每个会话每小时最多提交几次
+  speak_cooldown_seconds: 60.0    # 距上次成功发言的冷却（秒）
+  active_min_minutes: 15          # 聊天状态最短持续（分钟）
+  active_max_minutes: 30          # 聊天状态最长持续（分钟）
+  idle_minutes: 6                 # 聊天状态下多久没人说话就回潜水（分钟）
+  in_flight_timeout_seconds: 240  # 在途窗口超时（秒）超了放行下一轮
+  wake:                   # 唤醒条件 @ 与昵称默认开 其余按需
+    at: true              # 群里 @ 我
+    name: true            # 正文里叫到昵称
+    keyword: false        # 命中关键词族
+    keyword_list: []      # 关键词族列表
+    question: false       # 像在问 AI 的句子
+    quote: false          # 有人引用消息（近似判定）
+
+snapshot:                 # 交给模型的未读快照
+  unread_limit: 30        # 一次最多带多少条未读
+  max_chars: 6000         # 快照正文总字数上限 超了从最旧的开始省
+  old_message_minutes: 30 # 最新一条超过这么久就提醒「这是旧账」
+
+delivery:                 # 发送节流
+  burst_enable: true      # 分条之间加停顿
+  burst_interval_min: 1.0 # 分条停顿下限（秒）
+  burst_interval_max: 3.0 # 分条停顿上限（秒）
+  long_gap_probability: 0.1  # 使用长停顿的概率
+  long_gap_min: 2.5       # 长停顿下限（秒）
+  long_gap_max: 5.0       # 长停顿上限（秒）
+  max_send_per_minute: 8  # 每个会话每分钟最多发几条
+  max_send_per_hour: 60   # 每个会话每小时最多发几条
+
+submit:                   # 入口白名单与回复上限
   group_whitelist: []     # 群白名单；空列表拒绝所有群
-  at_only_in_group: false # true 时仅 @ 触发，不做昵称/概率唤醒；跟随仍有效
-  nickname_variants: []   # 额外唤醒昵称，account.bot_nickname 始终生效
-  followup_minutes: 5     # 成功群回复后的跟随窗口时长；0关闭。只有「被叫到才回」的回复才续窗，跟随里的回复不续
-  followup_messages: 8    # 每窗口普通群消息数量上限；0关闭。窗口内每条普通消息都能单独触发一轮跟随
-  recent_chat_limit: 8    # 每轮最多附带的最近消息数，触发消息始终保留
+  at_only_in_group: false # true 时仅 @ 触发 昵称/关键词/随机都不唤醒
+  nickname_variants: []   # 额外唤醒昵称 account.bot_nickname 始终生效
   max_reply_chars: 500    # 自动群回复字符上限；超限整条不发送
 
 split:                    # 输出分割 按空行切成几条就发几条

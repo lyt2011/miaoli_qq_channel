@@ -1,4 +1,16 @@
-from .buffers		import ThreadBacklog
+from .buffers	import MessageBufferStore, MessageEntry, ThreadQueue
+from .delivery	import SendGate, burst_gap
+from .social	import (
+	ChatState,
+	PRIORITY,
+	REASON_LABEL,
+	Scheduler,
+	SessionSocial,
+	SocialStore,
+	WakeDecision,
+	WakeReason,
+	is_private_thread,
+)
 from .tts			import synthesize, strip_tail_symbols
 from .markdown		import strip_markdown
 from .corpus_writer	import CorpusWriter, to_record
@@ -20,7 +32,24 @@ from .channel		import (
 __all__ = [
 
 	# buffers
-	"ThreadBacklog",
+	"MessageBufferStore",
+	"MessageEntry",
+	"ThreadQueue",
+
+	# delivery
+	"SendGate",
+	"burst_gap",
+
+	# social
+	"ChatState",
+	"PRIORITY",
+	"REASON_LABEL",
+	"Scheduler",
+	"SessionSocial",
+	"SocialStore",
+	"WakeDecision",
+	"WakeReason",
+	"is_private_thread",
 
 	# tts
 	"synthesize",

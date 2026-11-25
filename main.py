@@ -6,21 +6,31 @@ from ncatbot.event.qq	import MessageEvent
 from miaoli_bot.api	import please_run_graph, register_channel, store_recall, store_set
 
 from .models	import PluginConfig
-from .consts	import MESSAGE_BUFFER, PLUGIN_CONFIG, RAW_CONFIG, READY_BUFFER
-from .core		import (
+from .consts	import (
+	MESSAGE_BUFFER,
+	PLUGIN_CONFIG,
+	RAW_CONFIG,
+	READY_BUFFER,
+	SOCIAL_STORE,
+)
+from .core	import (
 	QQChannel,
 	QQChannelMessage,
 	CorpusWriter,
-	ThreadBacklog,
+	MessageBufferStore,
+	Scheduler,
+	SocialStore,
+	WakeDecision,
+	WakeReason,
 	is_addressed,
 	is_authorized,
 	thread_id_of,
 )
 
 from pathlib	import Path
-from typing		import Callable, Dict, List, Optional
+from typing		import Callable, List, Optional
 
-import asyncio
+import time
 
 
 PLUGIN_NAME	= "喵璃のQQ通道"
@@ -39,11 +49,11 @@ class MiaoLiQQChannel(NcatBotPlugin):
 		
 		self.undo_list	: List[Callable[[], None]]	= []
 		
-		# 句柄表不是业务状态 业务数据都在共享容器里
-		self.tasks	: Dict[str, asyncio.Task]	= {}
+		# 调度器句柄 状态机关掉时是 None
+		self.scheduler	: Optional[Scheduler]		= None
 		
 		# 语料记录器 没开就是 None
-		self.writer	: Optional[CorpusWriter]	= None
+		self.writer		: Optional[CorpusWriter]	= None
 	
 	async def on_load(self) -> None:
 		
@@ -54,9 +64,14 @@ class MiaoLiQQChannel(NcatBotPlugin):
 		self.undo_list.append(store_set(RAW_CONFIG, self.config))
 		self.undo_list.append(store_set(PLUGIN_CONFIG, config))
 		
-		# 构建积压区/就绪区
-		self.undo_list.append(store_set(MESSAGE_BUFFER, ThreadBacklog(cap=config.message.buf_size)))
-		self.undo_list.append(store_set(READY_BUFFER, []))
+		# 构建积压区/社交状态/就绪区
+		buffers = MessageBufferStore(cap=config.message.buf_size)
+		social	= SocialStore()
+		ready	: List[QQChannelMessage] = []
+		
+		self.undo_list.append(store_set(MESSAGE_BUFFER, buffers))
+		self.undo_list.append(store_set(SOCIAL_STORE, social))
+		self.undo_list.append(store_set(READY_BUFFER, ready))
 		
 		# 注册消息渠道
 		self.undo_list.append(register_channel(QQChannel()))
@@ -72,18 +87,30 @@ class MiaoLiQQChannel(NcatBotPlugin):
 			self.writer.open()
 			self.logger.info(f"{PLUGIN_NAME} 语料记录已开启 写入 {path}")
 		
+		# 状态机开着才跑调度器 关掉退回「被叫即提交」
+		if config.social.enabled:
+			self.scheduler = Scheduler(
+				config		= config,
+				buffers		= buffers,
+				social		= social,
+				ready		= ready,
+				make_message= self.make_message,
+				notify		= please_run_graph,
+			)
+			self.scheduler.start()
+		
 		self.logger.info(f"{PLUGIN_NAME} 已加载")
 	
 	async def on_close(self) -> None:
 		
-		# 先取消所有观察任务 用快照免得边遍历边被回调 pop 掉
-		for task in list(self.tasks.values()):
-			task.cancel()
-		
-		self.tasks.clear()
+		if self.scheduler is not None:
+			self.scheduler.stop()
+			self.scheduler = None
 		
 		for undo in self.undo_list:
 			undo()
+		
+		self.undo_list.clear()
 		
 		if self.writer is not None:
 			self.writer.close()
@@ -91,14 +118,27 @@ class MiaoLiQQChannel(NcatBotPlugin):
 		
 		self.logger.info(f"{PLUGIN_NAME} 已卸载")
 	
+	def make_message(
+		self,
+		entries			: List[object],
+		omitted			: int,
+		reason			: WakeReason,
+		delivered_seq	: int,
+	) -> QQChannelMessage:
+		
+		"""调度器不认 QQ 类型 窗口对象在这里造"""
+		
+		return QQChannelMessage(entries, omitted=omitted, reason=reason, delivered_seq=delivered_seq)
+	
 	@registrar.on_message()
 	async def backlog_anything(self, event: MessageEvent) -> None:
 		
 		"""私聊 event 和群聊 event 都记录进各自会话的积压区"""
 		
 		config	= store_recall(PLUGIN_CONFIG, default=None)
-		backlog	= store_recall(MESSAGE_BUFFER, default=None)
-		if config is None or backlog is None:
+		buffers	= store_recall(MESSAGE_BUFFER, default=None)
+		social	= store_recall(SOCIAL_STORE, default=None)
+		if config is None or buffers is None or social is None:
 			return None
 		
 		is_group = event.is_group_msg()
@@ -113,151 +153,61 @@ class MiaoLiQQChannel(NcatBotPlugin):
 		if self.writer is not None:
 			self.writer.write(event)
 		
-		thread_id = thread_id_of(event)
-		nicknames = [config.account.bot_nickname, *config.submit.nickname_variants]
-		addressed = is_addressed(event, config.account.bot_id, nicknames)
-		if is_group and config.submit.at_only_in_group:
-			addressed = event.message.is_at(config.account.bot_id, all_except=True)
+		thread_id	= thread_id_of(event)
+		addressed	= self.addressed_of(event, config)
+		entry		= buffers.record(thread_id, event, addressed)
+		now			= time.monotonic()
 		
-		# 入区时就把「是不是冲我来的」算好 之后不再重算
-		backlog.record(
-			thread_id	= thread_id,
-			event		= event,
-			addressed	= addressed,
-		)
+		# 状态机：只记账与判定 什么时候提交交给调度器
+		if self.scheduler is not None:
+			social.on_message(thread_id, entry, config, now)
+			return None
 		
-		# 冲我来的：起观察期 等对方补充完再一起交
+		# 状态机关掉：被叫到就立刻交一窗（旧行为）
 		if addressed:
-			self.watch_thread(thread_id)
-			
-			return None
-		
-		# 普通群消息逐条消耗跟随额度。
-		followup = is_group and backlog.consume_followup(thread_id)
-		# 已经在观察期里时本条仍计入跟随额度，但只延长现有 debounce。
-		task = self.tasks.get(thread_id)
-		if task is not None and not task.done():
-			return None
-		if followup:
-			self.watch_thread(thread_id)
-			return None
-		
-		if is_group and config.submit.at_only_in_group:
-			return None
-		
-		# 仅未寻址群消息进行概率触发。
-		if not is_group or not backlog.roll_dice(thread_id, config.submit.chance, config.submit.cooldown):
-			return None
-		
-		# 就绪区里已经有人排队时让位 免得随机开窗挤掉被 @ 的那条
-		# 没开成就不启动冷却 下一条消息还能再摇
-		if not self.submit_window(thread_id, require_empty=True):
-			self.logger.debug(f"{thread_id} 随机开窗让位（就绪区非空或已满）")
-			return None
-		
-		backlog.mark_rolled(thread_id)
-		self.logger.info(f"{thread_id} 随机开窗（未寻址）")
+			self.submit_now(thread_id, buffers, social, config, now)
 		
 		return None
 	
-	def watch_thread(self, thread_id: str) -> None:
+	def addressed_of(self, event: MessageEvent, config: PluginConfig) -> bool:
 		
-		"""给这个会话起一个观察任务 提交成功或会话空了它自己退出"""
+		"""是否「冲我来的」 群里 at_only 时只认 @"""
 		
-		task = self.tasks.get(thread_id)
+		if event.is_group_msg() and config.submit.at_only_in_group:
+			return event.message.is_at(config.account.bot_id, all_except=True)
 		
-		# 已经有一个活着的观察任务就不重复起
-		# 注意不能只判 in：add_done_callback 的回调是排进队列的
-		# 会残留已经跑完但还没被 pop 掉的任务
-		if task is not None and not task.done():
-			return None
+		nicknames = [config.account.bot_nickname, *config.submit.nickname_variants]
 		
-		task = asyncio.create_task(self.watch_until_quiet(thread_id))
-		self.tasks[thread_id] = task
-		
-		def _retire(finished: asyncio.Task) -> None:
-			
-			# 只清自己那一份 免得把后来者从字典里 pop 掉
-			if self.tasks.get(thread_id) is finished:
-				self.tasks.pop(thread_id, None)
-			
-			if finished.cancelled():
-				return None
-			
-			if exception := finished.exception():
-				self.logger.error(f"{thread_id} 观察任务异常: "
-					f"{type(exception).__name__}: {exception}", exc_info=exception)
-			
-			return None
-		
-		task.add_done_callback(_retire)
-		
-		return None
+		return is_addressed(event, config.account.bot_id, nicknames)
 	
-	async def watch_until_quiet(self, thread_id: str) -> None:
+	def submit_now(
+		self,
+		thread_id	: str,
+		buffers		: MessageBufferStore,
+		social		: SocialStore,
+		config		: PluginConfig,
+		now			: float,
+	) -> None:
 		
-		"""等这个会话安静下来 再把整段积压交给就绪区
+		"""状态机关闭时的退化路径：不看限流 被叫就交一窗"""
 		
-		只有提交成功才退出。就绪区满了就一直等下去 ——
-		一旦提前放开 那段对话就再没有任何东西会来开窗了
-		"""
-		
-		config	= store_recall(PLUGIN_CONFIG)
-		backlog	= store_recall(MESSAGE_BUFFER)
-		last	= backlog.revision(thread_id)
-		
-		while True:
-			
-			# 先等一个静默窗口 首次进来也要等
-			await asyncio.sleep(config.submit.quiet)
-			
-			backlog	= store_recall(MESSAGE_BUFFER)
-			current	= backlog.revision(thread_id)
-			
-			# 窗口内又有人说话 重新计时
-			if current != last:
-				last = current
-				continue
-			
-			# 还是没搬成（就绪区满 / 已在排队）就别放开 下一轮再来
-			if not self.submit_window(thread_id):
-				last = current
-				continue
-			
-			return None
-	
-	def submit_window(self, thread_id: str, require_empty: bool = False) -> bool:
-		
-		"""把这个会话的积压搬进就绪区 搬完了返回 True
-		
-		全程同步 中间一个 await 都不许有：多个观察任务会同时醒来 靠这个互斥
-		require_empty 给随机开窗用：有人在排队就让位 别挤掉被 @ 的那条
-		"""
-		
-		config	= store_recall(PLUGIN_CONFIG)
-		ready	= store_recall(READY_BUFFER)
-		backlog	= store_recall(MESSAGE_BUFFER)
+		ready = store_recall(READY_BUFFER)
 		
 		if len(ready) >= config.channel.buf_size:
-			return False
+			return None
+		if any(getattr(message, "thread_id", "") == thread_id for message in ready):
+			return None
 		
-		if require_empty and ready:
-			return False
+		entries = buffers.take(thread_id, limit=config.snapshot.unread_limit)
+		if not entries:
+			return None
 		
-		# 同一个会话已经在就绪区里排着队 不重复投递
-		if any(message.thread_id == thread_id for message in ready):
-			return False
+		reason = WakeReason.AT if any(entry.addressed for entry in entries) else WakeReason.CHANCE
+		ready.append(QQChannelMessage(entries, 0, reason, buffers.delivered_seq(thread_id)))
 		
-		addressed = backlog.has_addressed(thread_id)
-		
-		window = backlog.pop_window(thread_id, limit=config.submit.recent_chat_limit)
-		if not window:
-			return True
-		events, omitted = window
-		if not events:
-			return True
-		
-		ready.append(QQChannelMessage(events, omitted=omitted, addressed=addressed))
+		session		= social.session(thread_id)
+		decision	= session.pending or WakeDecision(reason, 0, now)
+		social.on_submit(thread_id, now, decision)
 		please_run_graph()
 		
-		return True
+		return None

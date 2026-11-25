@@ -1,10 +1,12 @@
 from miaoli_bot.api			import store_recall
 from miaoli_bot.protocols	import BaseChannel, Content
 
-from ...consts				import MESSAGE_BUFFER, READY_BUFFER, PLUGIN_CONFIG
+from ...consts				import MESSAGE_BUFFER, PLUGIN_CONFIG, READY_BUFFER, SOCIAL_STORE
 from ...models				import PluginConfig
 from ...utils				import easier_send
+from ..delivery				import SendGate, burst_gap
 from ..markdown				import strip_markdown
+from ..social				import SocialStore
 from ..tts					import strip_tail_symbols, synthesize
 from .wake_policy			import is_reply_allowed
 from .qq_channel_message	import (
@@ -20,6 +22,7 @@ import base64
 import random
 import asyncio
 import logging
+import time
 
 
 LOGGER = logging.getLogger("QQChannel")
@@ -38,8 +41,10 @@ class QQChannel(BaseChannel):
 	def __init__(self) -> None:
 		super().__init__()
 		
-		# thread_id -> 这一窗里有没有冲我来的消息 回复时用来决定要不要续跟随
-		self.addressed_windows: Dict[str, bool] = {}
+		# thread_id -> 发送频率账本
+		self.gates			: Dict[str, SendGate]	= {}
+		# thread_id -> 这一窗最后一行的序号 回复成功后推进水位
+		self.window_seq		: Dict[str, int]		= {}
 	
 	@property
 	def name(self) -> str:
@@ -49,7 +54,7 @@ class QQChannel(BaseChannel):
 	def platforms(self) -> FrozenSet[str]:
 		return frozenset({"qq"})
 	
-	async def drain(self) -> List[QQChannelMessage]:
+	async def drain(self) -> List[object]:
 		
 		"""取走就绪区里的全部消息 一次取空
 		
@@ -65,7 +70,8 @@ class QQChannel(BaseChannel):
 		ready.clear()
 		
 		for message in messages:
-			self.addressed_windows[message.thread_id] = message.addressed
+			if isinstance(message, QQChannelMessage):
+				self.window_seq[message.thread_id] = message.sequence_end
 		
 		return messages
 	
@@ -76,6 +82,7 @@ class QQChannel(BaseChannel):
 		markdown 在语音分支之前剥 剥完换行结构原样保留 分条依据就是原文的空行
 		语音的骰子仍按整条回复掷一次 命中就每条各合成一段语音
 		太长或太短 以及合成与发送失败 都回退到文字
+		发送完统一回报状态机：推进水位 / 记录发言时间 / 清在途标记
 		"""
 		
 		if platform not in self.platforms:
@@ -83,45 +90,100 @@ class QQChannel(BaseChannel):
 		
 		mode, chat_id	= split_thread_id(thread_id)
 		config			= store_recall(PLUGIN_CONFIG)
-		text			= strip_markdown(content_to_text(content))
-		pieces			= split_text(text, SEPARATOR) if config.split.enable else [text.strip()]
-		pieces			= [piece for piece in pieces if piece]
+		seq_end			= self.window_seq.pop(thread_id, 0)
+		sent			= False
 		
-		if not pieces:
-			return None
-		if not is_reply_allowed(mode, text, config.submit.max_reply_chars):
-			LOGGER.warning(f"群 {chat_id} 回复超限（{len(text)} > {config.submit.max_reply_chars}），整条不发送")
-			return None
+		try:
+			text	= strip_markdown(content_to_text(content))
+			pieces	= split_text(text, SEPARATOR) if config.split.enable else [text.strip()]
+			pieces	= [piece for piece in pieces if piece]
+			
+			if not pieces:
+				return None
+			
+			if not is_reply_allowed(mode, text, config.submit.max_reply_chars):
+				LOGGER.warning(f"群 {chat_id} 回复超限（{len(text)} > {config.submit.max_reply_chars}），整条不发送")
+				return None
+			
+			sent = await self.send_pieces(mode, chat_id, pieces, config, thread_id)
+		
+		finally:
+			self.finish_reply(thread_id, sent, seq_end, config)
+		
+		return None
+	
+	async def send_pieces(
+		self,
+		mode		: Literal["group", "private"],
+		chat_id		: Union[str, int],
+		pieces		: List[str],
+		config		: PluginConfig,
+		thread_id	: str,
+	) -> bool:
+		
+		"""逐条发送 受发送频率与分条停顿约束 有一条发出去就算 sent"""
 		
 		sent = False
+		gate = self.gate_of(thread_id, config)
+		
 		# w 与爱心只有字形没有读音 语音送过滤后的 文字路径仍发原文
 		# 长度门槛算的是说出来的字数 空行空白与尾巴符号都不算
-		speaking	= strip_tail_symbols(text)
+		speaking	= strip_tail_symbols(pieces[0] if len(pieces) == 1 else "\n\n".join(pieces))
 		spoken		= "".join(speaking.split())
 		
 		# 一次回复只掷一次骰子 命中就是整条语音 每条按空行切开各发一段
-		if (
+		use_voice = (
 			config.voice.enable
 			and config.voice.min_chars <= len(spoken) <= config.voice.max_chars
 			and random.random() < config.voice.probability
-		):
-			
-			for piece in pieces:
-				if not await self.send_voice(mode, chat_id, piece, config):
-					sent = await self.send_text(mode, chat_id, piece, config) or sent
-				else:
-					sent = True
-		else:
-			for piece in pieces:
-				sent = await self.send_text(mode, chat_id, piece, config) or sent
+		)
 		
-		# 只有「这轮是被叫到才回」的窗口才续跟随窗口
-		# 跟随窗口里每条普通消息都算一次触发 回复要是也续上 跟随就永远关不掉
-		if mode == "group" and sent:
-			backlog = store_recall(MESSAGE_BUFFER, default=None)
-			if backlog is not None and self.addressed_windows.pop(thread_id, True):
-				backlog.open_followup(thread_id, config.submit.followup_minutes, config.submit.followup_messages)
+		for index, piece in enumerate(pieces):
+			if index:
+				await asyncio.sleep(burst_gap(config))
+			
+			# 发太多就停手 剩下的直接丢 记账留给日志
+			if not gate.acquire():
+				LOGGER.warning(f"{thread_id} 达到发送频率上限 本轮剩余 {len(pieces) - index} 条不发")
+				break
+			
+			if use_voice and await self.send_voice(mode, chat_id, piece, config):
+				sent = True
+				continue
+			
+			sent = await self.send_text(mode, chat_id, piece, config) or sent
+		
+		return sent
+	
+	def finish_reply(self, thread_id: str, sent: bool, seq_end: int, config: PluginConfig) -> None:
+		
+		"""一轮跑图结束 状态机与水位都在这里收尾"""
+		
+		now			= time.monotonic()
+		social		= store_recall(SOCIAL_STORE, default=None)
+		if isinstance(social, SocialStore):
+			social.on_reply_finished(thread_id, sent, now, config)
+		
+		if not sent or not seq_end:
+			return None
+		
+		buffers = store_recall(MESSAGE_BUFFER, default=None)
+		if buffers is not None:
+			buffers.mark_delivered(thread_id, seq_end)
+		
 		return None
+	
+	def gate_of(self, thread_id: str, config: PluginConfig) -> SendGate:
+		
+		"""每个会话一个发送账本 首次用到时建"""
+		
+		gate = self.gates.get(thread_id)
+		if gate is None:
+			gate = self.gates[thread_id] = SendGate(
+				per_minute	= config.delivery.max_send_per_minute,
+				per_hour	= config.delivery.max_send_per_hour,
+			)
+		return gate
 	
 	async def send_voice(
 		self,

@@ -3,6 +3,7 @@ from .store_keys	import (
 	PLUGIN_CONFIG,
 	RAW_CONFIG,
 	READY_BUFFER,
+	SOCIAL_STORE,
 )
 
 
@@ -13,5 +14,6 @@ __all__ = [
 	"PLUGIN_CONFIG",
 	"RAW_CONFIG",
 	"READY_BUFFER",
+	"SOCIAL_STORE",
 
 ]
