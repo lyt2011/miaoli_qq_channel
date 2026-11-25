@@ -1,0 +1,6 @@
+name = "poke_ops"
+entry_class = "main.PokeOps"
+description = "隔一阵给模型一条可选的戳一戳提示 让它偶尔主动戳一下正在聊的人"
+[[dependences]]
+name = "human_injector"
+version = "0.59.0"

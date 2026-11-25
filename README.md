@@ -98,6 +98,7 @@ miaoli_qq_channel/
     ├── account_injector/      # 账号信息注入 account-info 提示词段
     ├── meme_ops/              # 表情包归档 / 发送 / 删除工具
     ├── persona_ops/           # 按场景注入可选的拟人表达提示
+    ├── poke_ops/              # 隔一阵注入可选的戳一戳提示
     └── qq_platform_tools/     # QQ 平台工具
 ```
 
@@ -257,13 +258,14 @@ await easier_send("group", 977469324, [{"type": "text", "data": {"text": "在的
 - `enable: false` 时 `self.writer` 是 `None`，不会写文件。
 - 写进去的是**渲染后**的文本，还原不出原始事件结构；要原始 ob11 数据得改 `to_record`。
 
-## 四个子插件
+## 五个子插件
 
 | 插件 | 作用 |
 |---|---|
 | `account_injector` | 读通道的 `account` 段，把管理员 / 机器人的 QQ 号与昵称拼成 `prompts` 的 `account-info` 段 |
 | `meme_ops` | 表情包素材库：归档 / 发送 / 按 hash 删除（sqlite）。0.7.0 从 `miaoli_bot/plugins/` 迁入 —— 它发送时依赖 `easier_send`，本来就是 QQ 专属；0.11.0 起可用表情清单写进 `human_injector` 的注入表（依赖该子插件；0.12.0 起按当前会话的 `thread_id` 分层写入），`meme-helper` 帮助文档仍走 `prompts` |
 | `persona_ops` | 按场景给模型一条**可选的**拟人表达提示：默认只开「被逗」和「自嘲」两类信号（正经 / 亲近两类也能配，但实测要么冗余要么把人设推偏），再过冷却与概率（默认 0.6），每轮最多一条、上一轮自动撤销；只管 QQ，提示写成「如果气氛合适，可以…」的建议而不是命令。依赖 `human_injector` 的按会话注入表。`enable` 默认 `false`，配置见 `plugins/persona_ops/config.example.yaml` |
+| `poke_ops` | 隔一阵给模型一条**可选的**戳一戳提示：同一会话按 `interval_minutes`（默认 10 分钟）限流，提示写进 `human_injector` 的按会话注入表、回合结束就撤掉，戳不戳由模型自己决定（动作走 `qq_platform_tools` 的 `send_poke`）。`enable` 默认 `false`，配置见 `plugins/poke_ops/config.example.yaml` |
 | `qq_platform_tools` | 发消息 / 收文件 / 查消息 / 撤回 / 戳一戳 / 语音转文字 |
 
 子插件由 `miaoli_bot` 的 `Loader` 加载 —— 本插件自己不带加载器。`config.yaml` 的 `sub_plugin.load_from` 需要同时包含两个目录：
