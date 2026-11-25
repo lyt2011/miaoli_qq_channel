@@ -98,6 +98,11 @@ class MiaoLiQQChannel(NcatBotPlugin):
 				notify		= please_run_graph,
 			)
 			self.scheduler.start()
+			self.logger.info(
+				f"{PLUGIN_NAME} 状态机调度器已启动 "
+				f"tick={config.social.tick_seconds}s 静默={config.social.quiet}s "
+				f"提交上限={config.social.max_submit_per_minute}/分 {config.social.max_submit_per_hour}/时"
+			)
 		
 		self.logger.info(f"{PLUGIN_NAME} 已加载")
 	
