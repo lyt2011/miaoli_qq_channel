@@ -257,7 +257,7 @@ await easier_send("group", 977469324, [{"type": "text", "data": {"text": "在的
 - `enable: false` 时 `self.writer` 是 `None`，不会写文件。
 - 写进去的是**渲染后**的文本，还原不出原始事件结构；要原始 ob11 数据得改 `to_record`。
 
-## 五个子插件
+## 四个子插件
 
 | 插件 | 作用 |
 |---|---|
