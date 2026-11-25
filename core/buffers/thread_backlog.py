@@ -21,6 +21,8 @@ class ThreadBacklog:
 		self.cap  = cap
 		self.data  : Dict[str, Deque[Tuple[Any, bool]]]  = {}
 		self.rolled_at  : Dict[str, float]  = {}
+		self.followups  : Dict[str, Tuple[float, int]]  = {}
+		self.revisions  : Dict[str, int]  = {}
 	
 	@property
 	def active_threads(self) -> int:
@@ -36,6 +38,7 @@ class ThreadBacklog:
 			bucket = self.data[thread_id] = deque()
 		
 		bucket.append((event, addressed))
+		self.revisions[thread_id] = self.revisions.get(thread_id, 0) + 1
 		
 		if len(bucket) > self.cap:
 			self._shrink(thread_id, bucket)
@@ -75,6 +78,32 @@ class ThreadBacklog:
 		
 		self.rolled_at[thread_id] = time.monotonic()
 	
+	def open_followup(self, thread_id: str, minutes: int, max_messages: int) -> None:
+		if minutes <= 0 or max_messages <= 0:
+			self.followups.pop(thread_id, None)
+			return None
+		self.followups[thread_id] = (time.monotonic() + minutes * 60, max_messages)
+	
+	def consume_followup(self, thread_id: str) -> bool:
+		window = self.followups.get(thread_id)
+		if window is None:
+			return False
+		until, remaining = window
+		if time.monotonic() >= until or remaining <= 0:
+			self.followups.pop(thread_id, None)
+			return False
+		if remaining == 1:
+			self.followups.pop(thread_id, None)
+		else:
+			self.followups[thread_id] = (until, remaining - 1)
+		return True
+	
+	def close_followup(self, thread_id: str) -> None:
+		self.followups.pop(thread_id, None)
+	
+	def revision(self, thread_id: str) -> int:
+		return self.revisions.get(thread_id, 0)
+	
 	def count(self, thread_id: str) -> int:
 		
 		"""这个会话现在积压了多少条"""
@@ -89,20 +118,23 @@ class ThreadBacklog:
 		
 		return list(self.data)
 	
-	def pop_window(self, thread_id: str) -> Optional[List[Any]]:
-		
-		"""把这个会话的积压整个取走 返回「旧 → 新」的事件列表"""
-		
+	def pop_window(self, thread_id: str, limit: Optional[int] = None) -> Optional[Tuple[List[Any], int]]:
+		"""取走积压，返回（最近事件，较早省略数）。"""
 		bucket = self.data.pop(thread_id, None)
+		self.revisions.pop(thread_id, None)
 		if not bucket:
 			return None
-		
-		events = [event for event, _ in bucket]
-		
-		# 超限的会话（全是寻址消息）只把最新的 cap 条送进图 免得一窗灌爆上下文
-		if len(events) > self.cap:
-			LOGGER.warning(f"会话 {thread_id} 单窗 {len(events)} 条 "
-				f"超过上限 {self.cap} 只取最新的 {self.cap} 条")
-			events = events[-self.cap:]
-		
-		return events
+		max_items = max(1, min(limit, self.cap)) if limit is not None else max(1, self.cap)
+		selected = list(range(max(0, len(bucket) - max_items), len(bucket)))
+		latest_addressed = next(
+			(index for index in range(len(bucket) - 1, -1, -1) if bucket[index][1]),
+			None,
+		)
+		if latest_addressed is not None and latest_addressed not in selected:
+			selected = [latest_addressed, *selected[-(max_items - 1):]] if max_items > 1 else [latest_addressed]
+		selected = sorted(set(selected))
+		omitted = len(bucket) - len(selected)
+		if omitted:
+			LOGGER.info(f"会话 {thread_id} 本窗省略 {omitted} 条较早消息")
+		events = [bucket[index][0] for index in selected]
+		return events, omitted

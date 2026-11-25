@@ -30,11 +30,11 @@ help_doc:
 | 节点 | 事件 / 优先级 | 产出 |
 | --- | --- | --- |
 | `inject_doc` | `on_agent_start`（`NORMAL`） | `prompts` 的 `meme-helper` 段，内容取自 `help_doc.path` 指向的文件 |
-| `inject_memes` | `on_agent_start`（`NORMAL`） | 注入表（`human_injector`）的 `available-memes` 条目，内容为所有已归档表情包的 `hash: description: tags` 列表（tags 是列表字面量，如 `['猫耳', '发呆']`）；由 `injections_reader` 渲染成 `<available-memes>` 段追加在 `messages` 末尾 |
+| `inject_memes` | `on_agent_start`（`NORMAL`） | 注入表（`human_injector`）的 `available-memes` 条目，内容为所有已归档表情包的 `hash: description: tags` 列表（tags 是列表字面量，如 `['猫耳', '发呆']`）；写入时带上当前会话的 `thread_id`（主包 0.59.0 起注入表按会话分层），由 `injections_reader` 渲染成 `<available-memes>` 段追加在 `messages` 末尾 |
 
 提示词落在 `data/meme_helper.md`，由 `inject_doc` 在每次注入时读取（不做缓存）。放在文件里而不是常量里，是为了改提示词不用动代码。
 
-`inject_memes` 依赖 `human_injector` 子插件（`metadata.toml` 里声明 `[[dependences]]`，加载顺序由 Loader 的拓扑排序保证）；清单是同名覆盖的，不会一轮叠一条。
+`inject_memes` 依赖 `human_injector` 子插件（`metadata.toml` 里声明 `[[dependences]]`，加载顺序由 Loader 的拓扑排序保证）；清单是同名覆盖的，不会一轮叠一条；每个会话各有一份，互不串味。
 
 ## 为什么需要它
 

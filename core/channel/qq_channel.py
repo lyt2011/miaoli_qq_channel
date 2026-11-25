@@ -1,11 +1,12 @@
 from miaoli_bot.api			import store_recall
 from miaoli_bot.protocols	import BaseChannel, Content
 
-from ...consts				import READY_BUFFER, PLUGIN_CONFIG
+from ...consts				import MESSAGE_BUFFER, READY_BUFFER, PLUGIN_CONFIG
 from ...models				import PluginConfig
 from ...utils				import easier_send
 from ..markdown				import strip_markdown
 from ..tts					import strip_tail_symbols, synthesize
+from .wake_policy			import is_reply_allowed
 from .qq_channel_message	import (
 	QQChannelMessage,
 	content_to_text,
@@ -79,7 +80,11 @@ class QQChannel(BaseChannel):
 		
 		if not pieces:
 			return None
+		if not is_reply_allowed(mode, text, config.submit.max_reply_chars):
+			LOGGER.warning(f"群 {chat_id} 回复超限（{len(text)} > {config.submit.max_reply_chars}），整条不发送")
+			return None
 		
+		sent = False
 		# w 与爱心只有字形没有读音 语音送过滤后的 文字路径仍发原文
 		# 长度门槛算的是说出来的字数 空行空白与尾巴符号都不算
 		speaking	= strip_tail_symbols(text)
@@ -93,16 +98,18 @@ class QQChannel(BaseChannel):
 		):
 			
 			for piece in pieces:
-				
-				# 这一段没转成语音就按文字补上 不整条重发
 				if not await self.send_voice(mode, chat_id, piece, config):
-					await self.send_text(mode, chat_id, piece, config)
-			
-			return None
+					sent = await self.send_text(mode, chat_id, piece, config) or sent
+				else:
+					sent = True
+		else:
+			for piece in pieces:
+				sent = await self.send_text(mode, chat_id, piece, config) or sent
 		
-		for piece in pieces:
-			await self.send_text(mode, chat_id, piece, config)
-		
+		if mode == "group" and sent:
+			backlog = store_recall(MESSAGE_BUFFER, default=None)
+			if backlog is not None:
+				backlog.open_followup(thread_id, config.submit.followup_minutes, config.submit.followup_messages)
 		return None
 	
 	async def send_voice(
@@ -150,15 +157,15 @@ class QQChannel(BaseChannel):
 		chat_id		: Union[str, int],
 		piece		: str,
 		config		: PluginConfig,
-	) -> None:
+	) -> bool:
 		
-		"""发一条文字 句尾的句号去掉 按字数模拟打字耗时"""
+		"""发一条文字 句尾的句号去掉 按字数模拟打字耗时 返回是否发送"""
 		
 		if piece.endswith(FULL_STOP):
 			piece = piece[:-len(FULL_STOP)]
 		
 		if not piece:
-			return None
+			return False
 		
 		if config.typing.enable:
 			max_speed  = config.typing.base_speed + config.typing.speed_offset
@@ -173,4 +180,4 @@ class QQChannel(BaseChannel):
 			ob11_message	= [{"type": "text", "data": {"text": piece}}],
 		)
 		
-		return None
+		return True

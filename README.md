@@ -4,10 +4,10 @@
 
 把 QQ 事件缓冲成**消息通道**，供 [`miaoli_bot`](https://github.com/lyt2011/miaoli_bot) 读取。
 
-- **版本**：0.10.0
+- **版本**：0.12.0
 - **入口**：`main.py`（插件类 `MiaoLiQQChannel`）
 - **运行载体**：Ncatbot 插件系统（NapCat / OneBot 11）
-- **依赖**：`miaoli_bot >= 0.58.0`（`meme_ops` 依赖其 `human_injector` 子插件；`BaseChannel.platforms` 与 `reply(platform, thread_id, content)` 是 0.44.0 才有的，`to_text()` 在 0.44.0 已被删除）；必需依赖 `markdown` 与 `beautifulsoup4`（`reply` 剥 markdown 用）；可选依赖 `httpx`（只有开了 `voice.enable` 才需要）
+- **依赖**：`miaoli_bot >= 0.59.0`（`meme_ops` 依赖其 `human_injector` 子插件 —— 主包 0.59.0 起注入表按会话分层，`inject_human` 需要传 `thread_id`，0.58.x 上跑会 `TypeError`；`BaseChannel.platforms` 与 `reply(platform, thread_id, content)` 是 0.44.0 才有的，`to_text()` 在 0.44.0 已被删除）；必需依赖 `markdown` 与 `beautifulsoup4`（`reply` 剥 markdown 用）；可选依赖 `httpx`（只有开了 `voice.enable` 才需要）
 
 ## 定位
 
@@ -47,7 +47,7 @@ QQChannel.reply(platform, thread_id, content)      剥 markdown → 按空行切
 
 | 缓冲 | 放什么 | 上限 | 满了怎么办 |
 |---|---|---|---|
-| `MESSAGE_BUFFER`（积压） | 收到的**全部**事件，按会话分队列 | `message.buf_size` | 只丢最旧的「没叫我」的消息并打日志 |
+| `MESSAGE_BUFFER`（积压） | 授权通过的事件，按会话分队列 | `message.buf_size` | 优先丢最旧的未寻址消息并打日志 |
 | `READY_BUFFER`（就绪） | 已经该开一次窗的会话，每会话一条 | `channel.buf_size` | 观察任务不提交，继续等主包取走 |
 
 **只有提交成功，观察任务才退出。** 这是刻意的：任务一旦提前放开而消息还躺在积压区，就再没有任何东西会来开窗 —— 表现就是「说了一堆发现根本没理你」。就绪区满了就一直等下去，主包取走一个它就补一个。
@@ -117,9 +117,16 @@ message:
   buf_size: 30          # 每个会话的积压上限（条），超了只丢最旧的「没叫我」的消息
 
 submit:
-  quiet: 8.0            # 静默窗口（秒）被@/被叫名字之后等对方补充这么久才提交
-  chance: 0.05          # 没人叫我时 每条消息尝试随机开窗的概率
-  cooldown: 120.0       # 随机开窗冷却（秒） 从上次开成算起
+  quiet: 8.0            # 寻址或跟随窗口消息静默后提交
+  chance: 0.05          # 未寻址群消息的随机触发概率
+  cooldown: 120.0       # 群随机触发冷却（秒）
+  group_whitelist: []   # 群白名单；为空拒绝所有群
+  at_only_in_group: false
+  nickname_variants: []
+  followup_minutes: 5
+  followup_messages: 8
+  recent_chat_limit: 8
+  max_reply_chars: 500
 
 split:                  # 输出分割 按空行切成几条就发几条
   enable: true
@@ -147,7 +154,13 @@ corpus:                 # 可选 语料录制 默认关
   flush: true           # 每条写完立刻刷盘 不刷最多丢最后一条
 ```
 
-## 通道只管「寻址」，不管「该不该说话」
+## 群聊唤醒与上下文
+
+群白名单为空时 fail-closed；私聊不设用户白名单，但机器人自己的回声会忽略。白名单外群消息和机器人回声不会进入积压区或可选语料。群聊支持 @、配置昵称和概率触发；`at_only_in_group` 可关闭昵称与随机触发。成功发出自动群回复后，开启仅存于进程内的有限时长、有限消息数跟随窗口。触发时最多提交最近 `recent_chat_limit` 条，较早省略数量会注明，且始终保留触发消息。自动群回复超过 `max_reply_chars` 时整条不发送，私聊不受此限制。
+
+群聊语气提示是普通消息正文，不是主包 system prompt。渠道无法阻止主包运行本轮 LLM，也无法控制绕过自动 `reply()` 的主动发送工具。重启后跟随状态清空。
+
+## 寻址判断
 
 三个无状态事实判断，`any()` 串起来：
 
@@ -159,7 +172,7 @@ corpus:                 # 可选 语料录制 默认关
 
 外加一条前置：**自己发的消息一律不算** —— 否则机器人自己的发言会被当成「被叫名字」，直接自激。
 
-`is_addressed` 返回 `False` 的含义是「**看不出证据**」，不是「确定不是冲我来的」。所以没证据的消息**仍然留在上下文里**，只是不参与溢出保护。至于这一轮要不要开口，归图里的 `output_checker` 决定 —— 通道不做政策判断。
+`is_addressed` 返回 `False` 的含义是「**看不出证据**」，不是「确定不是冲我来的」。授权消息仍会先进入积压区；之后由跟随窗口、`at_only_in_group`、随机概率和冷却决定是否提交。主包仍会处理已提交的消息，因此通道无法做到“不运行 LLM 的纯记录”。
 
 ## 主动唤醒
 
@@ -225,7 +238,7 @@ await easier_send("group", 977469324, [{"type": "text", "data": {"text": "在的
 
 ## 语料录制（可选）
 
-默认关。开了之后**每条**收到的消息都会先在 `backlog_anything` 的第一行落一行 JSONL，然后才走原有的缓冲逻辑 —— 放在最前面，后面任何早退分支都不会漏记。
+默认关。开了之后，只有通过群白名单且不是机器人自身的消息会写入群聊 JSONL；私聊不设名单限制。授权检查通过后先写语料，再进入积压与唤醒判定。
 
 ```jsonl
 {"time": "2026-11-14 13:31:41", "timestamp": 1794634301, "thread_id": "group-977469324", "type": "group", "group_id": "977469324", "group_name": "…", "user_id": "3757973483", "nickname": "…", "card": "…", "message_id": "444798564", "text": "…"}
@@ -240,7 +253,7 @@ await easier_send("group", 977469324, [{"type": "text", "data": {"text": "在的
 
 - `path` 留空写 `data/corpus.jsonl`，目录不存在会自动建。
 - `flush: true` 每条刷盘，崩溃最多丢最后一条；关掉则攒在缓冲里，快但可能丢一批。
-- 录制与通道行为**完全解耦**：`enable: false` 时 `self.writer` 是 `None`，`backlog_anything` 里只多一次 `is not None` 判断。
+- `enable: false` 时 `self.writer` 是 `None`，不会写文件。
 - 写进去的是**渲染后**的文本，还原不出原始事件结构；要原始 ob11 数据得改 `to_record`。
 
 ## 四个子插件
@@ -248,7 +261,7 @@ await easier_send("group", 977469324, [{"type": "text", "data": {"text": "在的
 | 插件 | 作用 |
 |---|---|
 | `account_injector` | 读通道的 `account` 段，把管理员 / 机器人的 QQ 号与昵称拼成 `prompts` 的 `account-info` 段 |
-| `meme_ops` | 表情包素材库：归档 / 发送 / 按 hash 删除（sqlite）。0.7.0 从 `miaoli_bot/plugins/` 迁入 —— 它发送时依赖 `easier_send`，本来就是 QQ 专属；0.11.0 起可用表情清单写进 `human_injector` 的注入表（依赖该子插件），`meme-helper` 帮助文档仍走 `prompts` |
+| `meme_ops` | 表情包素材库：归档 / 发送 / 按 hash 删除（sqlite）。0.7.0 从 `miaoli_bot/plugins/` 迁入 —— 它发送时依赖 `easier_send`，本来就是 QQ 专属；0.11.0 起可用表情清单写进 `human_injector` 的注入表（依赖该子插件；0.12.0 起按当前会话的 `thread_id` 分层写入），`meme-helper` 帮助文档仍走 `prompts` |
 | `qq_platform_tools` | 发消息 / 收文件 / 查消息 / 撤回 / 戳一戳 / 语音转文字 |
 
 子插件由 `miaoli_bot` 的 `Loader` 加载 —— 本插件自己不带加载器。`config.yaml` 的 `sub_plugin.load_from` 需要同时包含两个目录：

@@ -1,4 +1,5 @@
 from .qq_channel			import QQChannel
+from .wake_policy			import is_authorized, is_name_mentioned, is_reply_allowed
 from .render_event			import render_event
 from .render_segment		import render_segment
 from .qq_channel_message	import (
@@ -16,6 +17,11 @@ __all__ = [
 
 	# qq_channel
 	"QQChannel",
+
+	# wake_policy
+	"is_authorized",
+	"is_name_mentioned",
+	"is_reply_allowed",
 
 	# qq_channel_message
 	"QQChannelMessage",

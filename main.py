@@ -13,6 +13,7 @@ from .core		import (
 	CorpusWriter,
 	ThreadBacklog,
 	is_addressed,
+	is_authorized,
 	thread_id_of,
 )
 
@@ -95,18 +96,28 @@ class MiaoLiQQChannel(NcatBotPlugin):
 		
 		"""私聊 event 和群聊 event 都记录进各自会话的积压区"""
 		
-		# 语料记录放在最前面 后面的任何分支都不影响它
-		if self.writer is not None:
-			self.writer.write(event)
-		
 		config	= store_recall(PLUGIN_CONFIG, default=None)
 		backlog	= store_recall(MESSAGE_BUFFER, default=None)
-		
 		if config is None or backlog is None:
 			return None
 		
-		thread_id	= thread_id_of(event)
-		addressed	= is_addressed(event, config.account.bot_id, config.account.bot_nickname)
+		is_group = event.is_group_msg()
+		user_id = str(event.user_id)
+		group_id = str(event.group_id) if is_group else ""
+		if not is_authorized(
+			is_group, group_id, user_id, config.account.bot_id,
+			config.submit.group_whitelist,
+		):
+			return None
+		
+		if self.writer is not None:
+			self.writer.write(event)
+		
+		thread_id = thread_id_of(event)
+		nicknames = [config.account.bot_nickname, *config.submit.nickname_variants]
+		addressed = is_addressed(event, config.account.bot_id, nicknames)
+		if is_group and config.submit.at_only_in_group:
+			addressed = event.message.is_at(config.account.bot_id, all_except=True)
 		
 		# 入区时就把「是不是冲我来的」算好 之后不再重算
 		backlog.record(
@@ -121,13 +132,21 @@ class MiaoLiQQChannel(NcatBotPlugin):
 			
 			return None
 		
-		# 已经在观察期里了就让它一并带走 不插队打断 debounce
+		# 普通群消息逐条消耗跟随额度。
+		followup = is_group and backlog.consume_followup(thread_id)
+		# 已经在观察期里时本条仍计入跟随额度，但只延长现有 debounce。
 		task = self.tasks.get(thread_id)
 		if task is not None and not task.done():
 			return None
+		if followup:
+			self.watch_thread(thread_id)
+			return None
 		
-		# 没人叫我：摇骰子 命中就立刻交（不等补充，本来也没人在跟我说话）
-		if not backlog.roll_dice(thread_id, config.submit.chance, config.submit.cooldown):
+		if is_group and config.submit.at_only_in_group:
+			return None
+		
+		# 仅未寻址群消息进行概率触发。
+		if not is_group or not backlog.roll_dice(thread_id, config.submit.chance, config.submit.cooldown):
 			return None
 		
 		# 就绪区里已经有人排队时让位 免得随机开窗挤掉被 @ 的那条
@@ -185,7 +204,7 @@ class MiaoLiQQChannel(NcatBotPlugin):
 		
 		config	= store_recall(PLUGIN_CONFIG)
 		backlog	= store_recall(MESSAGE_BUFFER)
-		last	= backlog.count(thread_id)
+		last	= backlog.revision(thread_id)
 		
 		while True:
 			
@@ -193,7 +212,7 @@ class MiaoLiQQChannel(NcatBotPlugin):
 			await asyncio.sleep(config.submit.quiet)
 			
 			backlog	= store_recall(MESSAGE_BUFFER)
-			current	= backlog.count(thread_id)
+			current	= backlog.revision(thread_id)
 			
 			# 窗口内又有人说话 重新计时
 			if current != last:
@@ -229,11 +248,14 @@ class MiaoLiQQChannel(NcatBotPlugin):
 		if any(message.thread_id == thread_id for message in ready):
 			return False
 		
-		events = backlog.pop_window(thread_id)
+		window = backlog.pop_window(thread_id, limit=config.submit.recent_chat_limit)
+		if not window:
+			return True
+		events, omitted = window
 		if not events:
 			return True
 		
-		ready.append(QQChannelMessage(events))
+		ready.append(QQChannelMessage(events, omitted=omitted))
 		please_run_graph()
 		
 		return True

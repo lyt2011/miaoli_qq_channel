@@ -2,7 +2,7 @@ from human_injector.api	import inject_human
 
 from langgraph.runtime	import Runtime
 
-from miaoli_bot.api		import store_recall
+from miaoli_bot.api		import get_thread_id, store_recall
 from miaoli_bot.models	import GraphRuntimeContext, GraphState
 
 from ..core		import MemeSqlite
@@ -25,6 +25,6 @@ async def inject_memes(state: GraphState, runtime: Runtime[GraphRuntimeContext])
 	]
 	
 	# 同名覆盖旧值 旧 undo 自动失效 所以不用自己收集
-	inject_human("available-memes", "\n".join(memes))
+	inject_human("available-memes", "\n".join(memes), get_thread_id())
 	
 	return None
