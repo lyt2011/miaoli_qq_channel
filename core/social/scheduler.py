@@ -4,7 +4,7 @@ import asyncio
 import time
 import logging
 
-from .policy	import REASON_LABEL
+from .policy	import REASON_LABEL, WakeReason
 from .state		import SocialStore
 
 
@@ -101,6 +101,10 @@ class Scheduler:
 		
 		decision = social.decide(thread_id, now, config)
 		if decision is None:
+			return False
+		
+		# 跟一句要攒够几条未读 免得对着单条消息抢话
+		if decision.reason is WakeReason.ACTIVE and self.buffers.count(thread_id) < config.social.follow_min_unread:
 			return False
 		
 		entries = self.buffers.take(thread_id, limit=config.snapshot.unread_limit)

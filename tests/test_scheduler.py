@@ -130,7 +130,7 @@ def test_active_state_does_not_follow_up_by_default(monkeypatch):
 
 
 def test_active_state_follows_up_when_enabled(monkeypatch):
-	harness = Harness(monkeypatch, follow_up=True)
+	harness = Harness(monkeypatch, follow_up=True, follow_quiet=8.0, speak_cooldown_seconds=60.0, follow_min_unread=1)
 	harness.feed(FakeEvent(at_me=True), True, 100.0)
 	harness.scheduler.tick(now=109.0)
 	harness.drain()
@@ -139,6 +139,24 @@ def test_active_state_follows_up_when_enabled(monkeypatch):
 	harness.feed(FakeEvent(text="然后呢"), False, 200.0)
 	assert harness.scheduler.tick(now=203.0) == 0
 	assert harness.scheduler.tick(now=209.0) == 1
+	assert harness.ready[0].reason is WakeReason.ACTIVE
+
+
+def test_follow_up_needs_enough_unread(monkeypatch):
+	harness = Harness(monkeypatch, follow_up=True, follow_quiet=8.0, speak_cooldown_seconds=0.0, follow_min_unread=2)
+	harness.feed(FakeEvent(at_me=True), True, 100.0)
+	harness.scheduler.tick(now=109.0)
+	harness.drain()
+	harness.social.on_reply_finished("group-1", True, 120.0, harness.config)
+	
+	# 只有一条未读：不跟
+	harness.feed(FakeEvent(text="然后呢"), False, 200.0)
+	assert harness.scheduler.tick(now=209.0) == 0
+	assert harness.ready == []
+	
+	# 攒到两条：才跟
+	harness.feed(FakeEvent(text="说话啊"), False, 210.0)
+	assert harness.scheduler.tick(now=220.0) == 1
 	assert harness.ready[0].reason is WakeReason.ACTIVE
 
 

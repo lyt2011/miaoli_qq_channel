@@ -109,7 +109,7 @@ def test_addressed_wake_then_plain_chat_does_not_reopen(monkeypatch):
 
 
 def test_follow_up_when_enabled_is_rate_limited(monkeypatch):
-	replay = Replay(monkeypatch, follow_up=True)
+	replay = Replay(monkeypatch, follow_up=True, follow_quiet=8.0, speak_cooldown_seconds=60.0, follow_min_unread=1)
 	
 	replay.say("喵璃在吗", addressed=True, at_me=True)
 	replay.run(10.0)

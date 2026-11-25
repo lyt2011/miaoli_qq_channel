@@ -117,7 +117,8 @@ class SocialStore:
 		if session.state is not ChatState.ACTIVE or not social.follow_up:
 			return None
 		
-		if now - session.last_message_at < social.quiet:
+		# 跟随比被叫的静默更长 免得别人每句话都接
+		if now - session.last_message_at < social.follow_quiet:
 			return None
 		
 		# 刚说完话先闭嘴一会儿 私聊不受这条限制

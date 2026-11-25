@@ -18,12 +18,14 @@ social:                   # 会话社交状态机 diving / active
   tick_seconds: 1.0       # 调度器 tick 间隔（秒）
   quiet: 8.0              # 
   follow_up: false        # 聊天中状态是否主动跟一句；默认关（关掉后只有被叫或随机概率开窗）
+  follow_quiet: 30.0     # 跟随时需要的静默（秒）；比 quiet 长，免得每句话都接
+  follow_min_unread: 2   # 至少攒了几条未读才跟一句
 静默窗口：连续这么久没有新消息才提交
   chance: 0.05            # 潜水时普通消息的随机唤醒概率
   chance_cooldown_seconds: 120.0  # 随机唤醒成功后的冷却（秒）
   max_submit_per_minute: 1        # 每个会话每分钟最多提交几次
   max_submit_per_hour: 12         # 每个会话每小时最多提交几次
-  speak_cooldown_seconds: 60.0    # 距上次成功发言的冷却（秒）
+  speak_cooldown_seconds: 300.0   # 距上次成功发言的冷却（秒）；跟随间隔主要由它控制
   active_min_minutes: 15          # 聊天状态最短持续（分钟）
   active_max_minutes: 30          # 聊天状态最长持续（分钟）
   idle_minutes: 6                 # 聊天状态下多久没人说话就回潜水（分钟）

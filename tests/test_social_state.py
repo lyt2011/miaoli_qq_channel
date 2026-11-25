@@ -75,7 +75,7 @@ def test_active_session_does_not_follow_up_by_default(monkeypatch):
 
 def test_active_session_follows_up_when_enabled(monkeypatch):
 	store = quiet_store(monkeypatch)
-	config = make_config(follow_up=True)
+	config = make_config(follow_up=True, follow_quiet=8.0, speak_cooldown_seconds=60.0)
 	session = store.session("group-1")
 	session.state = ChatState.ACTIVE
 	session.last_message_at = 100.0
@@ -87,6 +87,19 @@ def test_active_session_follows_up_when_enabled(monkeypatch):
 	assert store.decide("group-1", 109.0, config) is None
 	# 冷却过了
 	assert store.decide("group-1", 161.0, config).reason is WakeReason.ACTIVE
+
+
+def test_follow_up_uses_its_own_quiet_window(monkeypatch):
+	store = quiet_store(monkeypatch)
+	config = make_config(follow_up=True, follow_quiet=30.0, speak_cooldown_seconds=0.0)
+	session = store.session("group-1")
+	session.state = ChatState.ACTIVE
+	session.last_message_at = 100.0
+	session.last_reply_at = 100.0
+	
+	# 比 quiet(8s) 长很多的跟随静默：31 秒刚够 30 秒
+	assert store.decide("group-1", 120.0, config) is None
+	assert store.decide("group-1", 131.0, config).reason is WakeReason.ACTIVE
 
 
 def test_submit_rate_limit_is_per_minute_and_private_is_exempt(monkeypatch):

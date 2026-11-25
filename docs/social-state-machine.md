@@ -135,7 +135,7 @@ class SessionBuffer:
 | diving | 命中 addressed（@ / 昵称 / 私聊） | active | 立即可提交（受限流） |
 | diving | 命中关键词 / 引用 / 提问 / 戳 | active | 同上（按权重排队） |
 | diving | 未命中，摇中 `chance` 且过冷却 | active | 提交一窗 |
-| active | 安静 `quiet`(8s) 且有未回消息（仅 `social.follow_up: true`） | active | 提交一窗（受 60s 发言冷却 + 限流） |
+| active | 安静 `follow_quiet`(30s)、距上次发言 ≥ `speak_cooldown_seconds`(300s)、未读 ≥ `follow_min_unread`(2)（仅 `social.follow_up: true`） | active | 提交一窗（再受限流） |
 | active | 活跃超过 `active_max_minutes`(随机 15~30) | retreating / diving | 可选取场话，否则直接回 diving |
 | active | 冷场 `idle_minutes`(6) | active | 默认**不**试探（配置可开：25% 概率试探一句） |
 | 任意 | 被 @ / 被叫名字 | active | 重置活跃计时 |
@@ -345,5 +345,12 @@ submit:
 | 设计稿 | 实际 | 原因 |
 | --- | --- | --- |
 | active 安静后自动跟一句 | 默认关闭，`social.follow_up: true` 才生效 | 实测聊天中每段自然停顿都会开一窗，观感仍是「一条消息一次」；关掉后普通消息除随机概率外不再触发，回归「被叫 / 随机才开窗」 |
+
+### 16.2 0.15.2 跟随节奏
+
+| 设计稿 | 实际 | 原因 |
+| --- | --- | --- |
+| active 用 `quiet`(8s) 作为跟话静默 | 独立成 `follow_quiet`（默认 30s） | 8s 在聊天里太容易达成，等于每句话都接 |
+| 跟话只受 60s 发言冷却 | 默认 `speak_cooldown_seconds` 拉到 300s，另加 `follow_min_unread`(默认 2) | 一轮跑图 1~3 分钟，期间会积压多条；攒够再跟、隔久一点才不像刷屏 |
 
 其它确认一致的点：Buffer 上限只丢最旧的未寻址消息、水位只前进、发送成功才推进水位、提交四道闸（静默 / 不在途 / 发言冷却 / 提交频率）、每秒 tick 的单调度任务、`ready` 每会话一条且满了下一 tick 再试。
