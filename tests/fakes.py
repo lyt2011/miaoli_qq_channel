@@ -54,6 +54,7 @@ def make_config(**social_overrides):
 		enable				= False,
 		duration_minutes	= 10,
 		min_interval_seconds= 3.0,
+		merge_quiet_seconds= 10.0,
 		max_submit_per_minute	= 2,
 		max_submit_per_hour		= 30,
 	)

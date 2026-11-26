@@ -86,10 +86,13 @@ class Scheduler:
 		if session.in_flight:
 			return False
 		
-		# 静默没到 等下一轮；跟随中的会话不走这条 下个 tick 就交
-		if not social.is_following(thread_id, config, now):
-			if now - self.buffers.last_message_at(thread_id) < config.social.quiet:
-				return False
+		# 静默没到 等下一轮；跟随中的会话用更长的合并窗口 把连发的消息并成一窗
+		if social.is_following(thread_id, config, now):
+			quiet = config.follow.merge_quiet_seconds
+		else:
+			quiet = config.social.quiet
+		if now - self.buffers.last_message_at(thread_id) < quiet:
+			return False
 		
 		# 就绪区里已经有这个会话 或已经满了
 		if any(getattr(message, "thread_id", "") == thread_id for message in self.ready):

@@ -125,7 +125,7 @@ class SessionBuffer:
 | 状态 | 含义 | 行为 |
 | --- | --- | --- |
 | `diving` | 潜水，平时状态 | 只有命中「必须回」的唤醒条件才进 active 并提交 |
-| `active` | 聊天中 / 跟随 | 回复成功后进入跟随；跟随里消息跳过 `quiet` 与 `chance`，下个 tick 直接提交（受 `follow.*` 限流与时长约束）；`follow.enable: false` 时不自动接话 |
+| `active` | 聊天中 / 跟随 | 回复成功后进入跟随；跟随里消息跳过 `chance`，安静 `follow.merge_quiet_seconds` 后合并提交（受 `follow.*` 限流与时长约束）；`follow.enable: false` 时不自动接话 |
 | `retreating` | 退场中（可选，默认不开） | 说一句退场话后回 diving |
 
 ### 5.2 转移表
@@ -135,7 +135,7 @@ class SessionBuffer:
 | diving | 命中 addressed（@ / 昵称 / 私聊） | active | 立即可提交（受限流） |
 | diving | 命中关键词 / 引用 / 提问 / 戳 | active | 同上（按权重排队） |
 | diving | 未命中，摇中 `chance` 且过冷却 | active | 提交一窗 |
-| active | 进入跟随（回复完成）后又有未读消息 | active | 下个 tick 提交一窗（受 `follow.min_interval_seconds` / 每分/每时上限约束） |
+| active | 进入跟随（回复完成）后又有未读消息 | active | 安静 `follow.merge_quiet_seconds` 后合并提交一窗（受 `follow.min_interval_seconds` / 每分/每时上限约束） |
 | active | 活跃超过 `active_max_minutes`(随机 15~30) | retreating / diving | 可选取场话，否则直接回 diving |
 | active | 冷场 `idle_minutes`(6) | active | 默认**不**试探（配置可开：25% 概率试探一句） |
 | 任意 | 被 @ / 被叫名字 | active | 重置活跃计时 |
@@ -143,7 +143,7 @@ class SessionBuffer:
 ### 5.3 active 的关键不变量
 
 1. **一个会话同一时刻最多一个在途窗口**：提交后置 `in_flight`，`reply()` 或失败回调后清；在途期间新消息继续攒，不提交。
-2. **普通会话说完话要等 `quiet`(8s) 静默**才评估下一次提交；**跟随中的会话跳过静默**，下个 tick 直接提交。
+2. **普通会话说完话要等 `quiet`(8s) 静默**才评估下一次提交；**跟随中的会话用更长的 `follow.merge_quiet_seconds` 合并窗口**，连发的一串消息合并成一窗提交。
 3. **跟随是一次「回复完成」开启的时间窗**：`follow.duration_minutes` 内，消息不走缓冲默认策略；被叫进入 active 本身还不算跟随，避免刚被 @ 就抢话。
 4. **所有提交都要过限流**（见 6.3），超限就攒着，不丢消息；跟随用 `follow.*` 自己的限流，普通窗口用 `social.*`。
 5. **跟随不再按消息计数**：`followup_minutes` / `followup_messages` 两个配置项删除；跟随节奏由 `follow.*` 的时长、最小间隔与每分/每时上限控制。
@@ -238,9 +238,10 @@ social:
   max_submit_per_minute: 1
   max_submit_per_hour: 12
   idle_minutes: 6
-follow:                     # 跟随：被叫之后的一段时间 消息跳过缓冲默认策略 下个 tick 直接提交
+follow:                     # 跟随：被叫之后的一段时间 消息跳过随机策略 安静合并后再提交
   enable: true
   duration_minutes: 10      # 每次提交后重新计时
+  merge_quiet_seconds: 10   # 合并窗口：安静这么久才合并提交（连发并成一窗）
   min_interval_seconds: 3
   max_submit_per_minute: 2
   max_submit_per_hour: 30
@@ -358,5 +359,12 @@ submit:
 | active 里消息仍走缓冲默认 `quiet`/`chance` 策略 | 跟随线程跳过缓冲默认策略：下个 tick 直接提交 | 跟随的语义是「正在跟人聊天」，不该再等 8 秒静默或摇随机 |
 | 跟随只用 `social.speak_cooldown_seconds` 一个数 | 独立的 `follow.*` 配置（时长 / 最小间隔 / 每分 / 每时） | 跟随是另一套节奏，和普通消息的提交限流分开调，互不影响 |
 | 被叫窗口也立刻提交 | 被叫窗口仍按 `quiet` 攒批；回复完成才进入跟随 | 先攒一下 @ + 后续消息，避免刚被 @ 就抢话，回复完再进入跟随接力 |
+
+### 16.3 0.16.1 跟随合并窗口
+
+| 设计稿 | 实际 | 原因 |
+| --- | --- | --- |
+| 跟随下消息「下个 tick 直接提交」 | 新增 `follow.merge_quiet_seconds`（默认 10 秒）：安静满这个时间才把这段时间的消息合并提交 | 连发的 @ / 刷屏会让每一轮跑图结束就立刻再开一窗，观感是「一直刷」；合并窗口把一串消息并成一窗，跑图次数显著下降 |
+| 被叫窗口与跟随窗口用两套静默 | 跟随里被叫窗口也走 `follow.merge_quiet_seconds`，非跟随时才用 `social.quiet` | 只要处于跟随，节奏就该按跟随的统一窗口攒批 |
 
 其它确认一致的点：Buffer 上限只丢最旧的未寻址消息、水位只前进、发送成功才推进水位、提交闸门（静默 / 不在途 / 限流）、每秒 tick 的单调度任务、`ready` 每会话一条且满了下一 tick 再试。

@@ -31,9 +31,10 @@ social:                   # 会话社交状态机 diving / active（普通消息
     question: false       # 像在问 AI 的句子
     quote: false          # 有人引用消息（近似判定）
 
-follow:                   # 跟随：被叫之后的一段时间里，该会话的消息跳过缓冲默认静默/随机策略
+follow:                   # 跟随：被叫之后的一段时间里，该会话的消息跳过随机策略、安静合并后再提交
   enable: true            # 开跟随；关掉后只有被叫或随机概率才开窗
   duration_minutes: 10    # 一次跟随最长持续（分钟），每次成功提交后重新计时
+  merge_quiet_seconds: 10.0       # 合并窗口：安静这么久才把这一串消息合并提交（连发不再各开一窗）
   min_interval_seconds: 3.0       # 跟随中两次提交的最小间隔（秒）
   max_submit_per_minute: 2        # 跟随中每分钟最多提交几次
   max_submit_per_hour: 30         # 跟随中每小时最多提交几次

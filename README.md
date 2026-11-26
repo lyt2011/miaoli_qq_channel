@@ -30,9 +30,9 @@ MessageBufferStore（每会话一条未读队列，入区时顺手打好「是�
 SocialStore（每会话一个状态机：diving 潜水 / active 聊天中）
   ├─ 潜水：命中唤醒条件（@ / 昵称 / 关键词 / 提问 / 引用）→ 记成 pending
   │        没命中就按 social.chance 摇随机（chance_cooldown_seconds 内不重复摇）
-  └─ 聊天中：默认只入队；follow.enable 打开后进入「跟随」——该会话的消息跳过缓冲默认静默/随机策略，下个 tick 直接提交（受跟随自己的限流与时长约束）
+  └─ 聊天中：默认只入队；follow.enable 打开后进入「跟随」——该会话的消息不再走随机策略，安静 `follow.merge_quiet_seconds` 秒后把这串消息合并成一窗提交（受跟随自己的限流与时长约束）
   ↓  Scheduler（单 asyncio 任务，每秒 tick）
-  每个 tick：状态超时检查 → 静默检查（跟随中跳过）→ 频率上限（跟随用 follow.*）→ decide → 提交
+  每个 tick：状态超时检查 → 静默检查（跟随用 follow.merge_quiet_seconds 合并窗口）→ 频率上限（跟随用 follow.*）→ decide → 提交
   ↓  提交成功：整段未读取走、包成一条 QQChannelMessage、记在途
 READY_BUFFER（就绪区，每会话一条）
   ↓  QQChannel.drain()                             一次取空、原地 clear
@@ -53,7 +53,7 @@ QQChannel.reply(platform, thread_id, content)      剥 markdown → 按空行切
 | `SocialStore`（社交状态） | diving / active、pending 唤醒、提交与发言时间戳、在途标记 | 只在进程内，重启清空；限流按会话算 |
 | `READY_BUFFER`（就绪） | 已经该开窗的会话，每会话一条 | `channel.buf_size` 上限，满了调度器下一 tick 再试 |
 
-**为什么不再「一条消息一次跑图」**：普通消息只进队列与状态判定，绝不直接提交；提交必须同时满足「静默 `quiet`」「不在途」「过每分钟/每小时上限」。只有**被叫之后进入跟随**的会话，才会在下一 tick 直接提交，并改用 `follow.*` 自己的限流（默认 2/分、30/时）与时长（默认 10 分钟，每次提交后重新计时）。
+**为什么不再「一条消息一次跑图」**：普通消息只进队列与状态判定，绝不直接提交；提交必须同时满足「静默 `quiet`」「不在途」「过每分钟/每小时上限」。只有**被叫之后进入跟随**的会话，才会改用 `follow.*` 自己的合并窗口与限流：安静 `follow.merge_quiet_seconds`（默认 10 秒）后把这段时间的消息合并成一窗提交，连发的一串消息只跑一次图（默认限流 2/分、30/时，时长 10 分钟，每次提交后重新计时）。
 
 ## 目录结构
 
@@ -153,9 +153,10 @@ social:                 # 会话状态机（普通消息默认策略）
     question: false
     quote: false
 
-follow:                 # 跟随：被叫之后，该会话消息跳过缓冲默认策略，下个 tick 直接提交
+follow:                 # 跟随：被叫之后，该会话消息跳过随机策略，安静合并后再提交
   enable: true          # 跟随开关；关掉后只有被叫或随机概率才开窗
   duration_minutes: 10  # 一次跟随最长持续（分钟），每次提交后重新计时
+  merge_quiet_seconds: 10.0  # 合并窗口：消息要安静这么久才把这一串合并提交（连发不再各开一窗）
   min_interval_seconds: 3.0  # 跟随中两次提交的最小间隔（秒）
   max_submit_per_minute: 2   # 跟随中每分钟最多提交几次
   max_submit_per_hour: 30    # 跟随中每小时最多提交几次
@@ -208,7 +209,7 @@ corpus:                 # 可选 语料录制 默认关
 命中任何一条只是**记成 pending**，不会立刻跑图：还要等 `social.quiet` 秒静默、不在途、过发言冷却、并且通过每分钟/每小时提交上限。
 
 - **潜水（diving）**：没命中唤醒条件时按 `social.chance` 摇随机；`chance_cooldown_seconds` 内不重复摇。私聊不摇，永远按被叫处理。
-- **聊天中 / 跟随（active）**：被叫唤醒进入，回复完成后 `follow.duration_minutes` 内该会话处于跟随：消息只入队，但不走缓冲默认的 `quiet` 静默与 `chance` 随机——**下个 tick 直接提交**，理由记作「跟随中接话」。跟随有自己的限流（`min_interval_seconds` / `max_submit_per_minute` / `max_submit_per_hour`），每次成功提交重新计时；冷场 `idle_minutes` 或时长到期后回潜水。`follow.enable: false` 时聊天中不自动接话。
+- **聊天中 / 跟随（active）**：被叫唤醒进入，回复完成后 `follow.duration_minutes` 内该会话处于跟随：消息只入队，不走 `chance` 随机；静默改用 `follow.merge_quiet_seconds`（默认 10 秒）——**连发的一串消息合并成一窗**，安静满这个时间才提交，理由记作「跟随中接话」。跟随有自己的限流（`min_interval_seconds` / `max_submit_per_minute` / `max_submit_per_hour`），每次成功提交重新计时；冷场 `idle_minutes` 或时长到期后回潜水。`follow.enable: false` 时聊天中不自动接话。
 - **快照**：最多带 `snapshot.unread_limit` 条未读，按 `snapshot.max_chars` 预算从最旧的开始省略（省略条数写在正文里）；每条带 `[HH:MM:SS · 多久以前]` 前缀；最新一条超过 `old_message_minutes` 会附「这是旧账」提醒；头部有唤醒理由、未读条数、已读水位与「你看到的不是全部」。
 - **水位**：`reply` 发送成功后才把该会话的已读水位推进到本窗最后一条；发送失败不推进。
 - 自动群回复超过 `max_reply_chars` 时整条不发送，私聊不受此限制。

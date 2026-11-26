@@ -129,16 +129,17 @@ def test_active_state_does_not_follow_up_by_default(monkeypatch):
 	assert harness.ready == []
 
 
-def test_following_thread_submits_next_tick(monkeypatch):
+def test_following_thread_waits_merge_quiet(monkeypatch):
 	harness = Harness(monkeypatch, enable_follow=True)
 	harness.feed(FakeEvent(at_me=True), True, 100.0)
 	assert harness.scheduler.tick(now=109.0) == 1
 	harness.drain()
 	harness.social.on_reply_finished("group-1", True, 110.0, harness.config)
 	
-	# 跟随中不吃 quiet：消息到了下个 tick 就交，理由=跟随
+	# 跟随中走合并窗口：连发要安静 10 秒才交，理由=跟随
 	harness.feed(FakeEvent(text="然后呢"), False, 111.0)
-	assert harness.scheduler.tick(now=112.0) == 1
+	assert harness.scheduler.tick(now=112.0) == 0
+	assert harness.scheduler.tick(now=121.0) == 1
 	assert harness.ready[0].reason is WakeReason.FOLLOW
 
 
@@ -150,9 +151,26 @@ def test_follow_interval_blocks_next_tick(monkeypatch):
 	harness.social.on_reply_finished("group-1", True, 110.0, harness.config)
 	
 	harness.feed(FakeEvent(text="然后呢"), False, 111.0)
-	# 距上次提交只过了 3 秒，被跟随最小间隔挡住
+	# 合并窗口没到
 	assert harness.scheduler.tick(now=112.0) == 0
-	assert harness.scheduler.tick(now=120.0) == 1
+	# 安静满 10 秒，且距上次提交 12 秒 ≥ 最小间隔 10 秒
+	assert harness.scheduler.tick(now=121.0) == 1
+
+
+def test_follow_merges_burst_into_one_window(monkeypatch):
+	harness = Harness(monkeypatch, enable_follow=True)
+	harness.feed(FakeEvent(at_me=True), True, 100.0)
+	assert harness.scheduler.tick(now=109.0) == 1
+	harness.drain()
+	harness.social.on_reply_finished("group-1", True, 110.0, harness.config)
+	
+	# 跟随中连发三条：合并窗口从最后一条算起
+	for now in (111.0, 113.0, 115.0):
+		harness.feed(FakeEvent(text="刷屏"), False, now)
+	assert harness.scheduler.tick(now=121.0) == 0
+	assert harness.scheduler.tick(now=126.0) == 1
+	assert len(harness.ready) == 1
+	assert len(harness.ready[0].entries) == 3
 
 
 def test_follow_expires_after_duration(monkeypatch):
