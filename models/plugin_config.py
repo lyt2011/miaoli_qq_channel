@@ -7,6 +7,7 @@ from .config	import (
 	DeliveryConfig,
 	FollowConfig,
 	MediaConfig,
+	SendBudgetConfig,
 	MessageConfig,
 	SnapshotConfig,
 	SocialConfig,
@@ -29,6 +30,7 @@ class PluginConfig(BaseModel):
 	follow	: FollowConfig	= Field(default_factory=FollowConfig, description="跟随模式配置")
 	media	: MediaConfig = Field(default_factory=MediaConfig, description="入站媒体缓存配置")
 	message	: MessageConfig	= Field(default_factory=MessageConfig, description="消息配置")
+	send_budget: SendBudgetConfig	= Field(default_factory=SendBudgetConfig, description="一轮发送预算配置")
 	snapshot: SnapshotConfig	= Field(default_factory=SnapshotConfig, description="未读快照配置")
 	social	: SocialConfig	= Field(default_factory=SocialConfig, description="会话状态机配置")
 	submit	: SubmitConfig	= Field(default_factory=SubmitConfig, description="入口白名单配置")

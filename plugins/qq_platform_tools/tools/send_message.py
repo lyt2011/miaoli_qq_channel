@@ -2,8 +2,9 @@ from langchain_core.tools	import tool
 
 from pydantic	import BaseModel, Field, model_validator
 
-from miaoli_qq_channel.utils	import easier_send
-from miaoli_bot.api				import get_ncatbot_api
+from miaoli_qq_channel.utils	import allow_send, easier_send
+from miaoli_qq_channel.consts	import PLUGIN_CONFIG
+from miaoli_bot.api				import get_ncatbot_api, get_thread_id, store_recall
 
 from ..models	import (
 	AtMessage,
@@ -72,6 +73,12 @@ async def send_message_to_qq(chat_id: str, mode: Mode, messages: Messages) -> st
 	image 最多 20 条，可以与 text/at/reply 同时存在
 	video/file/record 最多 1 条，不能跟 text/at/reply/image 同时存在
 	"""
+	
+	channel_config = store_recall(PLUGIN_CONFIG)
+	if channel_config is not None:
+		budget = channel_config.send_budget
+		if budget.enable and not allow_send(get_thread_id(), "messages", budget.max_messages):
+			return "[本轮发送次数已用完 把剩下的话放进最终回复 别再调发送工具]"
 	
 	ob11_messages = [message.to_ob11() for message in messages]
 	

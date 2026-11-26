@@ -4,7 +4,9 @@ from ncatbot.plugin					import NcatBotPlugin
 from ncatbot.event.qq				import MessageEvent
 from ncatbot.types.common.segment	import Image
 
-from miaoli_bot.api	import please_run_graph, register_channel, store_recall, store_set
+from miaoli_bot.api		import get_handler_registry, get_thread_id, please_run_graph, register_channel, store_recall, store_set
+from miaoli_bot.consts	import NORMAL, ON_AGENT_END, ON_AGENT_START
+
 
 from .models	import PluginConfig
 from .consts	import (
@@ -28,6 +30,8 @@ from .core	import (
 	is_authorized,
 	thread_id_of,
 )
+
+from .utils	import clear_send_budget, reset_send_budget
 
 from pathlib	import Path
 from typing		import Callable, List, Optional
@@ -125,6 +129,12 @@ class MiaoLiQQChannel(NcatBotPlugin):
 				f"提交上限={config.social.max_submit_per_minute}/分 {config.social.max_submit_per_hour}/时"
 			)
 		
+		# 一轮跑图开始重置发送预算 回合结束清掉 防止模型一直调发送工具刷屏
+		if config.send_budget.enable:
+			registry = get_handler_registry()
+			self.undo_list.append(registry.on(ON_AGENT_START, self.on_agent_start_budget, priority=NORMAL))
+			self.undo_list.append(registry.on(ON_AGENT_END, self.on_agent_end_budget, priority=NORMAL))
+		
 		self.logger.info(f"{PLUGIN_NAME} 已加载")
 	
 	async def on_close(self) -> None:
@@ -148,6 +158,26 @@ class MiaoLiQQChannel(NcatBotPlugin):
 			self.writer = None
 		
 		self.logger.info(f"{PLUGIN_NAME} 已卸载")
+	
+	async def on_agent_start_budget(self, *args) -> None:
+		
+		"""一轮跑图开始 清空这个会话的发送计数"""
+		
+		thread_id = get_thread_id()
+		if thread_id is not None:
+			reset_send_budget(thread_id)
+		
+		return None
+	
+	async def on_agent_end_budget(self, *args) -> None:
+		
+		"""回合结束 把这个会话的计数删掉"""
+		
+		thread_id = get_thread_id()
+		if thread_id is not None:
+			clear_send_budget(thread_id)
+		
+		return None
 	
 	def make_message(
 		self,

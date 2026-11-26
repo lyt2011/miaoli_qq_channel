@@ -53,6 +53,8 @@ QQChannel.reply(platform, thread_id, content)      剥 markdown → 按空行切
 | `SocialStore`（社交状态） | diving / active、pending 唤醒、提交与发言时间戳、在途标记 | 只在进程内，重启清空；限流按会话算 |
 | `READY_BUFFER`（就绪） | 已经该开窗的会话，每会话一条 | `channel.buf_size` 上限，满了调度器下一 tick 再试 |
 
+**为什么一轮跑图会发好几条**：主包的 agent 是一轮多步的工具循环，模型可以在一轮里先后调用 `send_message_to_qq` / `send_meme_to_qq` / `send_poke` 编排气泡，最后返回最终回复。`send_budget` 给一轮里的文字 / 表情包 / 戳一戳各设了一个上限，超了就返回「本轮次数已用完，把剩下的话放进最终回复」，避免模型被主包的「注入新 HumanMessage」触发得一直发。
+
 **为什么不再「一条消息一次跑图」**：普通消息只进队列与状态判定，绝不直接提交；提交必须同时满足「静默 `quiet`」「不在途」「过每分钟/每小时上限」。只有**被叫之后进入跟随**的会话，才会改用 `follow.*` 自己的合并窗口与限流：安静 `follow.merge_quiet_seconds`（默认 10 秒）后把这段时间的消息合并成一窗提交，连发的一串消息只跑一次图（默认限流 2/分、30/时，时长 10 分钟，每次提交后重新计时）。
 
 ## 目录结构
@@ -134,6 +136,12 @@ channel:
 
 message:
   buf_size: 30          # 每个会话的未读上限（条），超了只丢最旧的「没叫我」的消息
+
+send_budget:            # 一轮跑图里的发送预算：防止模型一直调发送工具刷屏
+  enable: true          # 关掉就不限制
+  max_messages: 3       # 一轮最多发几条文字（0 表示不限）
+  max_memes: 2          # 一轮最多发表情包（0 表示不限）
+  max_pokes: 1          # 一轮最多戳几次（0 表示不限）
 
 media:                  # 入站媒体缓存：图片一进来就下载到本地 模型直接 read_image 看
   enable: true          # 关掉就退回「给模型图片 URL」 链接几分钟后会过期

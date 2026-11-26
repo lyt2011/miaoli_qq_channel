@@ -13,6 +13,12 @@ channel:
 message:
   buf_size: 30            # 每个会话的未读上限（条） 超了只丢最旧的「没叫我」的消息
 
+send_budget:              # 一轮跑图里的发送预算：防止模型一直调发送工具刷屏
+  enable: true            # 关掉就不限制 完全靠模型自觉
+  max_messages: 3         # 一轮最多用 send_message_to_qq 发几条文字（0 表示不限）
+  max_memes: 2            # 一轮最多发表情包（0 表示不限）
+  max_pokes: 1            # 一轮最多戳几次（0 表示不限）
+
 media:                    # 入站媒体缓存：图片一进来就下载到本地 模型直接 read_image 看
   enable: true            # 关掉就退回「给模型图片 URL」 链接几分钟后会过期
   path: null              # 缓存目录 留空用插件 data/media

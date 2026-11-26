@@ -4,8 +4,9 @@ from ncatbot.types	import Image, MessageArray
 
 from pydantic	import BaseModel, Field
 
-from miaoli_qq_channel.utils	import easier_send
-from miaoli_bot.api				import get_ncatbot_api, store_recall
+from miaoli_qq_channel.utils	import allow_send, easier_send
+from miaoli_qq_channel.consts	import PLUGIN_CONFIG as CHANNEL_PLUGIN_CONFIG
+from miaoli_bot.api				import get_ncatbot_api, get_thread_id, store_recall
 
 from ..core		import MemeSqlite
 from ..consts	import PLUGIN_CONFIG
@@ -38,6 +39,12 @@ async def send_meme_to_qq(
 	private: chat_id 作为用户QQ号，将信息以私聊的方式发送到 chat_id 对应的用户
 	"""
 		
+	channel_config = store_recall(CHANNEL_PLUGIN_CONFIG)
+	if channel_config is not None:
+		budget = channel_config.send_budget
+		if budget.enable and not allow_send(get_thread_id(), "memes", budget.max_memes):
+			return {"status": False, "message": "[本轮表情包次数已用完 把想说的放进最终回复]"}
+	
 	try:
 	
 		# 模型偶尔会漏前导 0 或写成大写 两个都试一遍
