@@ -1,6 +1,7 @@
-from .buffers	import MessageBufferStore, MessageEntry, ThreadQueue
-from .delivery	import SendGate, burst_gap
-from .social	import (
+from .buffers		import MessageBufferStore, MessageEntry, ThreadQueue
+from .delivery		import SendGate, burst_gap
+from .media_cache	import MediaCache, cached_path, clear_registry, register
+from .social		import (
 	ChatState,
 	PRIORITY,
 	REASON_LABEL,
@@ -39,6 +40,12 @@ __all__ = [
 	# delivery
 	"SendGate",
 	"burst_gap",
+
+	# media_cache
+	"MediaCache",
+	"cached_path",
+	"clear_registry",
+	"register",
 
 	# social
 	"ChatState",

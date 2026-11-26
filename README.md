@@ -36,7 +36,7 @@ SocialStore（每会话一个状态机：diving 潜水 / active 聊天中）
   ↓  提交成功：整段未读取走、包成一条 QQChannelMessage、记在途
 READY_BUFFER（就绪区，每会话一条）
   ↓  QQChannel.drain()                             一次取空、原地 clear
-QQChannelMessage（未读快照 / 唤醒理由 / 已读水位）
+QQChannelMessage（未读快照 / 唤醒理由 / 已读水位；图片已缓存成本地路径 模型用 read_image 看）
   ↓  to_content() 渲染成带时间戳的 markdown 快照
   ↓  主包 tick + 通道的 please_run_graph() 唤醒
 GraphState.messages（一条 HumanMessage = to_content()）
@@ -134,6 +134,13 @@ channel:
 
 message:
   buf_size: 30          # 每个会话的未读上限（条），超了只丢最旧的「没叫我」的消息
+
+media:                  # 入站媒体缓存：图片一进来就下载到本地 模型直接 read_image 看
+  enable: true          # 关掉就退回「给模型图片 URL」 链接几分钟后会过期
+  path: null            # 缓存目录 留空用插件 data/media
+  max_megabytes: 20     # 单个文件大小上限（MB）
+  max_files: 500        # 缓存目录最多保留多少个文件
+  timeout_seconds: 10.0 # 单个下载超时（秒）
 
 social:                 # 会话状态机（普通消息默认策略）
   enabled: true         # 关掉退回旧行为：被叫到就立刻提交，不限流不攒批

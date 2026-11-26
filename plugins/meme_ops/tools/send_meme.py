@@ -9,6 +9,7 @@ from miaoli_bot.api				import get_ncatbot_api, store_recall
 
 from ..core		import MemeSqlite
 from ..consts	import PLUGIN_CONFIG
+from ..utils	import normalize_meme_hash
 
 from typing	import Dict, Any, Literal
 
@@ -39,12 +40,24 @@ async def send_meme_to_qq(
 		
 	try:
 	
+		# 模型偶尔会漏前导 0 或写成大写 两个都试一遍
+		candidates = []
+		for candidate in (hash, normalize_meme_hash(hash)):
+			if candidate and candidate not in candidates:
+				candidates.append(candidate)
+		
 		async with MemeSqlite(store_recall(PLUGIN_CONFIG).database.path) as meme_sqlite:
 			
-			if not await meme_sqlite.has_hash(hash):
+			matched = ""
+			for candidate in candidates:
+				if await meme_sqlite.has_hash(candidate):
+					matched = candidate
+					break
+			
+			if not matched:
 				return {"status": False, "message": f"找不到 hash 为 {hash} 的表情包"}
 			
-			meme_info	= await meme_sqlite.fetch_meme_by_hash(hash)
+			meme_info	= await meme_sqlite.fetch_meme_by_hash(matched)
 			base64_data	= meme_info["base64"].decode()
 		
 		send_result = await easier_send(

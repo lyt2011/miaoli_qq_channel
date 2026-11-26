@@ -3,6 +3,7 @@ from .account			import AccountConfig
 from .message			import MessageConfig
 from .split_config		import SplitConfig
 from .follow_config		import FollowConfig
+from .media_config		import MediaConfig
 from .social_config		import SocialConfig, WakeConfig
 from .typing_config		import TypingConfig
 from .voice_config		import VoiceConfig
@@ -19,6 +20,7 @@ __all__ = [
 	"CorpusConfig",
 	"DeliveryConfig",
 	"FollowConfig",
+	"MediaConfig",
 	"MessageConfig",
 	"SnapshotConfig",
 	"SocialConfig",

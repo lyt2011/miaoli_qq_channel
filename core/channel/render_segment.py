@@ -12,6 +12,8 @@ from ncatbot.types.common.segment	import (
 
 from typing	import Any, Optional
 
+from ..media_cache	import cached_path
+
 
 # 常见富文本段里可能装正文的字段 取第一个非空的当预览
 PREVIEW_FIELDS = ("title", "content", "text", "desc", "summary")
@@ -75,6 +77,15 @@ def render_segment(segment: MessageSegment) -> str:
 		return f"[回复 {segment.id}]"
 	
 	if isinstance(segment, Image):
+		# 入站时就下载好的图片 直接给本地路径 模型用 read_image 看 不用再去拉会过期的 URL
+		path = cached_path(segment.url) if segment.url else None
+		if path:
+			name = segment.file_name or segment.file
+			pieces = ["图片"]
+			if name and name != path:
+				pieces.append(name)
+			pieces.append(f"已缓存:{path}")
+			return f"[{' '.join(pieces)}]"
 		return _media("图片", segment)
 	
 	if isinstance(segment, Record):

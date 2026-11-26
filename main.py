@@ -1,7 +1,8 @@
-from ncatbot.utils		import get_log
-from ncatbot.core		import registrar
-from ncatbot.plugin		import NcatBotPlugin
-from ncatbot.event.qq	import MessageEvent
+from ncatbot.utils					import get_log
+from ncatbot.core					import registrar
+from ncatbot.plugin					import NcatBotPlugin
+from ncatbot.event.qq				import MessageEvent
+from ncatbot.types.common.segment	import Image
 
 from miaoli_bot.api	import please_run_graph, register_channel, store_recall, store_set
 
@@ -14,6 +15,7 @@ from .consts	import (
 	SOCIAL_STORE,
 )
 from .core	import (
+	MediaCache,
 	QQChannel,
 	QQChannelMessage,
 	CorpusWriter,
@@ -30,6 +32,7 @@ from .core	import (
 from pathlib	import Path
 from typing		import Callable, List, Optional
 
+import asyncio
 import time
 
 
@@ -38,6 +41,9 @@ LOGGER		= get_log(PLUGIN_NAME)
 
 # 语料记录 配置里 path 留空时写到这里
 DEFAULT_CORPUS_PATH = Path(__file__).resolve().parent / "data" / "corpus.jsonl"
+
+# 入站媒体缓存 配置里 path 留空时用这个目录
+DEFAULT_MEDIA_PATH = Path(__file__).resolve().parent / "data" / "media"
 
 
 class MiaoLiQQChannel(NcatBotPlugin):
@@ -54,6 +60,10 @@ class MiaoLiQQChannel(NcatBotPlugin):
 		
 		# 语料记录器 没开就是 None
 		self.writer		: Optional[CorpusWriter]	= None
+		
+		# 入站媒体缓存 关掉就是 None
+		self.media_cache: Optional[MediaCache] = None
+		self.media_tasks: set = set()
 	
 	async def on_load(self) -> None:
 		
@@ -75,6 +85,17 @@ class MiaoLiQQChannel(NcatBotPlugin):
 		
 		# 注册消息渠道
 		self.undo_list.append(register_channel(QQChannel()))
+		
+		# 图片进来就缓存到本地 模型看到的是本地路径 不会拿到过期链接
+		if config.media.enable:
+			media_path = Path(config.media.path) if config.media.path else DEFAULT_MEDIA_PATH
+			self.media_cache = MediaCache(
+				root			= media_path,
+				max_megabytes	= config.media.max_megabytes,
+				max_files		= config.media.max_files,
+				timeout_seconds	= config.media.timeout_seconds,
+			)
+			self.logger.info(f"{PLUGIN_NAME} 入站媒体缓存已开启 写入 {media_path}")
 		
 		# 语料记录是可选能力 不开就完全不影响原有的通道行为
 		if config.corpus.enable:
@@ -116,6 +137,11 @@ class MiaoLiQQChannel(NcatBotPlugin):
 			undo()
 		
 		self.undo_list.clear()
+		
+		for task in list(self.media_tasks):
+			task.cancel()
+		self.media_tasks.clear()
+		self.media_cache = None
 		
 		if self.writer is not None:
 			self.writer.close()
@@ -163,6 +189,9 @@ class MiaoLiQQChannel(NcatBotPlugin):
 		entry		= buffers.record(thread_id, event, addressed)
 		now			= time.monotonic()
 		
+		# 图片一进来就下载 等窗口提交时链接还没过期
+		self.schedule_media_cache(event)
+		
 		# 状态机：只记账与判定 什么时候提交交给调度器
 		if self.scheduler is not None:
 			social.on_message(thread_id, entry, config, now)
@@ -171,6 +200,28 @@ class MiaoLiQQChannel(NcatBotPlugin):
 		# 状态机关掉：被叫到就立刻交一窗（旧行为）
 		if addressed:
 			self.submit_now(thread_id, buffers, social, config, now)
+		
+		return None
+	
+	def schedule_media_cache(self, event: MessageEvent) -> None:
+		
+		"""把这条消息里的图片丢给缓存器 后台下载 不阻塞入队"""
+		
+		if self.media_cache is None:
+			return None
+		
+		for segment in event.message or []:
+			if not isinstance(segment, Image):
+				continue
+			
+			url = getattr(segment, "url", "")
+			if not url or self.media_cache.path_for(url):
+				continue
+			
+			name = getattr(segment, "file_name", "") or getattr(segment, "file", "")
+			task = asyncio.create_task(self.media_cache.cache(url, name))
+			self.media_tasks.add(task)
+			task.add_done_callback(self.media_tasks.discard)
 		
 		return None
 	
@@ -212,7 +263,7 @@ class MiaoLiQQChannel(NcatBotPlugin):
 		
 		session		= social.session(thread_id)
 		decision	= session.pending or WakeDecision(reason, 0, now)
-		social.on_submit(thread_id, now, decision)
+		social.on_submit(thread_id, now, decision, config)
 		please_run_graph()
 		
 		return None

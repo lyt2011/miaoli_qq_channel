@@ -6,6 +6,7 @@ from .config	import (
 	CorpusConfig,
 	DeliveryConfig,
 	FollowConfig,
+	MediaConfig,
 	MessageConfig,
 	SnapshotConfig,
 	SocialConfig,
@@ -26,6 +27,7 @@ class PluginConfig(BaseModel):
 	corpus	: CorpusConfig	= Field(default_factory=CorpusConfig, description="语料记录配置")
 	delivery: DeliveryConfig	= Field(default_factory=DeliveryConfig, description="发送节流配置")
 	follow	: FollowConfig	= Field(default_factory=FollowConfig, description="跟随模式配置")
+	media	: MediaConfig = Field(default_factory=MediaConfig, description="入站媒体缓存配置")
 	message	: MessageConfig	= Field(default_factory=MessageConfig, description="消息配置")
 	snapshot: SnapshotConfig	= Field(default_factory=SnapshotConfig, description="未读快照配置")
 	social	: SocialConfig	= Field(default_factory=SocialConfig, description="会话状态机配置")

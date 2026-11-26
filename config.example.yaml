@@ -13,6 +13,13 @@ channel:
 message:
   buf_size: 30            # 每个会话的未读上限（条） 超了只丢最旧的「没叫我」的消息
 
+media:                    # 入站媒体缓存：图片一进来就下载到本地 模型直接 read_image 看
+  enable: true            # 关掉就退回「给模型图片 URL」 链接几分钟后会过期
+  path: null              # 缓存目录 留空用插件 data/media
+  max_megabytes: 20       # 单个文件大小上限（MB）
+  max_files: 500          # 缓存目录最多保留多少个文件
+  timeout_seconds: 10.0   # 单个下载超时（秒）
+
 social:                   # 会话社交状态机 diving / active（普通消息的默认策略）
   enabled: true           # 关掉退回旧行为：被叫到就立刻提交，不限流不攒批
   tick_seconds: 1.0       # 调度器 tick 间隔（秒）
